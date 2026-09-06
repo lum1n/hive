@@ -1,0 +1,113 @@
+package tmux
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/lum1n/hive/internal/cache"
+	"github.com/lum1n/hive/internal/sshx"
+)
+
+const ListFormat = "#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_activity}"
+
+func Args(bin, socket string, rest ...string) []string {
+	if bin == "" {
+		bin = "tmux"
+	}
+	args := []string{bin}
+	if socket != "" {
+		args = append(args, "-L", socket)
+	}
+	return append(args, rest...)
+}
+
+func ListSessions(bin, socket string) []string {
+	return Args(bin, socket, "list-sessions", "-F", ListFormat)
+}
+
+func HasSession(bin, socket, name string) []string {
+	return Args(bin, socket, "has-session", "-t", exact(name))
+}
+
+func NewSession(bin, socket, name string) []string {
+	return Args(bin, socket, "new-session", "-d", "-s", name)
+}
+
+func KillSession(bin, socket, name string) []string {
+	return Args(bin, socket, "kill-session", "-t", exact(name))
+}
+
+func RenameSession(bin, socket, from, to string) []string {
+	return Args(bin, socket, "rename-session", "-t", exact(from), to)
+}
+
+// AttachShell is a login-free sh -c body: set options, then exec attach.
+func AttachShell(bin, socket, name string) string {
+	t := shellCmd(bin, socket)
+	target := sshx.SingleQuote(exact(name))
+	return fmt.Sprintf(
+		"%s set-option -t %s window-size latest 2>/dev/null; "+
+			"%s set-option -t %s destroy-unattached off 2>/dev/null; "+
+			"exec %s -u attach-session -t %s",
+		t, target, t, target, t, target,
+	)
+}
+
+func AttachCommand(bin, socket, name string) []string {
+	return []string{"sh", "-c", AttachShell(bin, socket, name)}
+}
+
+func shellCmd(bin, socket string) string {
+	parts := Args(bin, socket)
+	quoted := make([]string, len(parts))
+	for i, p := range parts {
+		quoted[i] = sshx.SingleQuote(p)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func exact(name string) string {
+	return "=" + name
+}
+
+func ParseList(raw string) []cache.Session {
+	var out []cache.Session
+	for line := range strings.SplitSeq(raw, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) < 3 || parts[0] == "" {
+			continue
+		}
+		windows, _ := strconv.Atoi(parts[1])
+		attached := parts[2] == "1"
+		activity := ""
+		if len(parts) > 3 {
+			activity = parts[3]
+		}
+		out = append(out, cache.Session{
+			Name:     parts[0],
+			Windows:  windows,
+			Attached: attached,
+			Activity: activity,
+		})
+	}
+	return out
+}
+
+func MissingServer(message string) bool {
+	for _, part := range []string{
+		"no server running",
+		"no sessions",
+		"can't find session",
+		"error connecting to ",
+	} {
+		if strings.Contains(message, part) {
+			return true
+		}
+	}
+	return false
+}
