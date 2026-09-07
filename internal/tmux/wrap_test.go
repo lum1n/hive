@@ -4,6 +4,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/lum1n/hive/internal/sshx"
 )
 
 func TestPreludeFindsMacSockets(t *testing.T) {
@@ -13,7 +15,6 @@ func TestPreludeFindsMacSockets(t *testing.T) {
 		"/opt/homebrew/bin",
 		"/opt/homebrew/opt/tmux/bin",
 		"/opt/homebrew/Cellar/tmux/",
-		"brew --prefix",
 		"/usr/local/opt/tmux/bin",
 		"/opt/local/bin",
 		"/sw/bin",
@@ -22,6 +23,7 @@ func TestPreludeFindsMacSockets(t *testing.T) {
 		"$HOME/.nix-profile/bin",
 		"$HOME/.asdf/shims",
 		"$HOME/miniconda3/bin",
+		"/usr/sbin",
 		"/private/tmp/tmux-",
 		"/var/folders",
 		"hive_add_sock",
@@ -80,14 +82,19 @@ func TestCmdDirectInsideTmuxLocal(t *testing.T) {
 	}
 }
 
-func TestPreludeProbesSocketsInsteadOfFirstFile(t *testing.T) {
+func TestPreludePrefersLiveSocketsOverTmp(t *testing.T) {
 	t.Parallel()
 	p := Prelude("tmux", "")
 	if strings.Contains(p, `if [ -z "${TMUX:-}" ]`) {
 		t.Fatal("must not skip socket scan when $TMUX is set")
 	}
-	if !strings.Contains(p, "list-sessions >/dev/null") {
-		t.Fatal("must probe sockets; a dead /tmp socket hid the GUI server")
+	lsofAt := strings.Index(p, `-U -Fn`)
+	tmpAt := strings.Index(p, "/tmp/tmux-$uid/*")
+	if lsofAt < 0 || tmpAt < 0 || lsofAt > tmpAt {
+		t.Fatal("lsof live sockets must be collected before /tmp files")
+	}
+	if strings.Contains(p, "list-sessions >/dev/null") {
+		t.Fatal("do not probe sockets with list-sessions")
 	}
 }
 
@@ -97,6 +104,53 @@ func TestWrapScriptSyntax(t *testing.T) {
 	cmd := exec.Command("sh", "-n", "-c", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sh -n: %v\n%s", err, out)
+	}
+}
+
+func TestWrapListsLiveServer(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	t.Setenv("TMUX", "")
+	cmd := exec.Command("tmux", "list-sessions")
+	if err := cmd.Run(); err != nil {
+		t.Skip("no live tmux server")
+	}
+	script := Script("tmux", "", "list-sessions", "-F", ListFormat)
+	out, err := exec.Command("sh", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wrap: %v\n%s", err, out)
+	}
+	got := ParseList(string(out))
+	if len(got) == 0 {
+		t.Fatalf("wrap listed nothing\n%s", out)
+	}
+}
+
+func TestWrapThroughZshLikeSSH(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not installed")
+	}
+	t.Setenv("TMUX", "")
+	if err := exec.Command("tmux", "list-sessions").Run(); err != nil {
+		t.Skip("no live tmux server")
+	}
+	remote := []string{"sh", "-c", Script("tmux", "", "list-sessions", "-F", ListFormat)}
+	quoted := make([]string, len(remote))
+	for i, a := range remote {
+		quoted[i] = sshx.SingleQuote(a)
+	}
+	cmdline := strings.Join(quoted, " ")
+	out, err := exec.Command("zsh", "-c", cmdline).CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh -c wrap: %v\n%s", err, out)
+	}
+	got := ParseList(string(out))
+	if len(got) == 0 {
+		t.Fatalf("zsh wrap listed nothing\n%s", out)
 	}
 }
 

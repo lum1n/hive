@@ -31,7 +31,7 @@ func TestRefreshEmptyServer(t *testing.T) {
 	}
 	host := config.Host{ID: "local", Local: true}
 	snap := Refresh(context.Background(), run, sshx.Options{}, host)
-	if snap.Status != cache.StatusOnline || len(snap.Sessions) != 0 || snap.Error != "no tmux server" {
+	if snap.Status != cache.StatusOnline || len(snap.Sessions) != 0 || !strings.Contains(snap.Error, "no server running") {
 		t.Fatalf("%+v", snap)
 	}
 }
@@ -66,6 +66,18 @@ func TestRefreshAll(t *testing.T) {
 	}
 	if n != 2 {
 		t.Fatalf("got %d", n)
+	}
+}
+
+func TestRefreshEmptyStdout(t *testing.T) {
+	t.Parallel()
+	run := func(ctx context.Context, name string, args ...string) execx.Result {
+		return execx.Result{Stdout: []byte("")}
+	}
+	host := config.Host{ID: "box", SSH: "box"}
+	snap := Refresh(context.Background(), run, sshx.Options{RuntimeDir: t.TempDir()}, host)
+	if snap.Status != cache.StatusOnline || snap.Error != "no sessions" {
+		t.Fatalf("%+v", snap)
 	}
 }
 

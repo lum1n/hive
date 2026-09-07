@@ -30,7 +30,7 @@ func Refresh(ctx context.Context, run execx.Runner, opt sshx.Options, host confi
 	if res.Err != nil {
 		msg := strings.TrimSpace(res.ErrText())
 		if tmux.MissingServer(msg) {
-			return cache.HostSnapshot{Time: now, Status: cache.StatusOnline, Error: "no tmux server", Sessions: []cache.Session{}}
+			return cache.HostSnapshot{Time: now, Status: cache.StatusOnline, Error: compact(msg), Sessions: []cache.Session{}}
 		}
 		return cache.HostSnapshot{
 			Time:   now,
@@ -38,10 +38,19 @@ func Refresh(ctx context.Context, run execx.Runner, opt sshx.Options, host confi
 			Error:  compact(msg),
 		}
 	}
+	sessions := tmux.ParseList(string(res.Stdout))
+	err := ""
+	if len(sessions) == 0 {
+		err = compact(string(res.Stderr))
+		if err == "" {
+			err = "no sessions"
+		}
+	}
 	return cache.HostSnapshot{
 		Time:     now,
 		Status:   cache.StatusOnline,
-		Sessions: tmux.ParseList(string(res.Stdout)),
+		Error:    err,
+		Sessions: sessions,
 	}
 }
 

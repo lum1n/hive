@@ -74,6 +74,9 @@ ssh -M -S ~/.ssh/hive-laptop.sock -o ControlPersist=30m -fnN user@laptop
 
 Override the file with `-config` or `HIVE_CONFIG`.
 
+`hive -dump` prints each host’s status and sessions without the TUI.
+`hive -version` prints the build.
+
 ## Keys
 
 | Where | Key | Action |

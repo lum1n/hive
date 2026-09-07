@@ -12,6 +12,7 @@ import (
 // and then pick the same binary the live server is running.
 const pathPrelude = `_saved_tmux=${TMUX:-}
 unset TMUX
+PATH="/usr/sbin:/sbin:/usr/bin:/bin:$PATH"
 for _d in \
   /opt/homebrew/bin /opt/homebrew/opt/tmux/bin /opt/homebrew/sbin \
   /usr/local/bin /usr/local/opt/tmux/bin \
@@ -26,12 +27,6 @@ do
 [ -n "$_d" ] && [ -d "$_d" ] || continue
 case ":$PATH:" in *":$_d:"*) ;; *) PATH="$_d:$PATH" ;; esac
 done
-if command -v brew >/dev/null 2>&1; then
-_bp=$(brew --prefix 2>/dev/null) || true
-[ -n "$_bp" ] && [ -d "$_bp/bin" ] && case ":$PATH:" in *":$_bp/bin:"*) ;; *) PATH="$_bp/bin:$PATH" ;; esac
-_tp=$(brew --prefix tmux 2>/dev/null) || true
-[ -n "$_tp" ] && [ -d "$_tp/bin" ] && case ":$PATH:" in *":$_tp/bin:"*) ;; *) PATH="$_tp/bin:$PATH" ;; esac
-fi
 [ -n "${HOMEBREW_PREFIX:-}" ] && [ -d "$HOMEBREW_PREFIX/bin" ] && case ":$PATH:" in *":$HOMEBREW_PREFIX/bin:"*) ;; *) PATH="$HOMEBREW_PREFIX/bin:$PATH" ;; esac
 export PATH
 `
@@ -139,7 +134,6 @@ $HIVE_TMUX_SOCKS
 " in *"
 $_sock
 "*) return 0 ;; esac
-"$HIVE_TMUX_BIN" -S "$_sock" list-sessions >/dev/null 2>&1 || return 0
 if [ -n "$HIVE_TMUX_SOCKS" ]; then
 HIVE_TMUX_SOCKS="$HIVE_TMUX_SOCKS
 $_sock"
@@ -147,21 +141,19 @@ else
 HIVE_TMUX_SOCKS="$_sock"
 fi
 }
-hive_add_sock "${_saved_tmux%%,*}"
-hive_add_sock "${TMUX_TMPDIR:+$TMUX_TMPDIR/tmux-$uid/default}"
-hive_add_sock "/tmp/tmux-$uid/default"
-hive_add_sock "/private/tmp/tmux-$uid/default"
-hive_add_sock "$HOME/.tmux/tmp/tmux-$uid/default"
-for _sock in /tmp/tmux-$uid/* /private/tmp/tmux-$uid/* /tmp/tmux-*/default /private/tmp/tmux-*/default /var/folders/*/*/T/tmux-$uid/*; do
-hive_add_sock "$_sock"
-done
 if command -v lsof >/dev/null 2>&1; then
 while IFS= read -r _sock; do
 hive_add_sock "$_sock"
 done <<EOF
-$(lsof -nP -c tmux -a -u "$_user" -U -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/tmux-')
+$(lsof -nP -c tmux -a -u "$_user" -U -Fn 2>/dev/null | sed -n 's/^n//p' | sed 's/ (.*//' | grep tmux-)
 EOF
 fi
+hive_add_sock "${_saved_tmux%%,*}"
+hive_add_sock "${TMUX_TMPDIR:+$TMUX_TMPDIR/tmux-$uid/default}"
+hive_add_sock "${TMPDIR:+${TMPDIR%/}/tmux-$uid/default}"
+for _sock in /var/folders/*/*/T/tmux-$uid/* /private/tmp/tmux-$uid/* "$HOME/.tmux/tmp/tmux-$uid/"* /tmp/tmux-$uid/* /private/tmp/tmux-*/default /tmp/tmux-*/default; do
+hive_add_sock "$_sock"
+done
 `
 
 const tmuxFn = `hive_tmux() {
