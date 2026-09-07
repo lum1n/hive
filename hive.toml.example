@@ -3,6 +3,7 @@
 
 prefix = "ctrl-space"
 
+# The machine you are sitting on. Use local = true — do not SSH to yourself.
 [[hosts]]
 id = "local"
 label = "local"
@@ -16,3 +17,7 @@ tmux = "tmux"
 # tmux = "tmux"
 # # socket = ""
 # # control_path = "~/.ssh/hive-devbox.sock"
+
+# tmux = "tmux" is enough. Hive finds Homebrew / MacPorts / Nix / conda
+# binaries and GUI sockets. Pin a path only if you have two installs:
+# tmux = "/opt/homebrew/bin/tmux"

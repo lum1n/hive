@@ -1,6 +1,14 @@
 package picker
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/lum1n/hive/internal/workspace"
+)
 
 func TestMatch(t *testing.T) {
 	t.Parallel()
@@ -22,5 +30,32 @@ func TestMatch(t *testing.T) {
 				t.Fatalf("match(%q, %q) = %v", tt.filter, tt.target, got)
 			}
 		})
+	}
+}
+
+func TestFinishKeepsAttachWhenProgramKilled(t *testing.T) {
+	t.Parallel()
+	killed := fmt.Errorf("%w: %w", tea.ErrProgramKilled, context.Canceled)
+	got, err := finish(model{choice: Choice{
+		Action:    ActionAttach,
+		Workspace: workspace.ID{Host: "local", Session: "dev"},
+	}}, killed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionAttach || got.Workspace.Display() != "local/dev" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestFinishQuitStillReturnsKillError(t *testing.T) {
+	t.Parallel()
+	killed := fmt.Errorf("%w: %w", tea.ErrProgramKilled, context.Canceled)
+	got, err := finish(model{choice: Choice{Action: ActionQuit}}, killed)
+	if !errors.Is(err, tea.ErrProgramKilled) {
+		t.Fatalf("err=%v", err)
+	}
+	if got.Action != ActionQuit {
+		t.Fatalf("%+v", got)
 	}
 }

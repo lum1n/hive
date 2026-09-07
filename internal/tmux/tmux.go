@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
@@ -65,6 +66,38 @@ func shellCmd(bin, socket string) string {
 		quoted[i] = sshx.SingleQuote(p)
 	}
 	return strings.Join(quoted, " ")
+}
+
+func SwitchClient(bin, socket, name string) []string {
+	return Args(bin, socket, "switch-client", "-t", exact(name))
+}
+
+func ClientName() []string {
+	return []string{"tmux", "display-message", "-p", "#{client_name}"}
+}
+
+func PaneSession() []string {
+	return []string{"tmux", "display-message", "-p", "#{session_name}"}
+}
+
+func ClientSession(client string) []string {
+	return []string{"tmux", "display-message", "-c", client, "-p", "#{client_session}"}
+}
+
+func ShowOption(name string) []string {
+	return []string{"tmux", "show-options", "-qv", name}
+}
+
+func SetOption(name, value string) []string {
+	return []string{"tmux", "set-option", name, value}
+}
+
+func UnsetOption(name string) []string {
+	return []string{"tmux", "set-option", "-u", name}
+}
+
+func Inside() bool {
+	return os.Getenv("TMUX") != ""
 }
 
 func exact(name string) string {

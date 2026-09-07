@@ -132,6 +132,7 @@ func DefaultPath() string {
 }
 
 const Example = `# Hive workspace hosts. Opt-in only.
+# The machine you sit on: local = true. Do not SSH to yourself.
 
 prefix = "ctrl-space"
 
@@ -146,6 +147,7 @@ tmux = "tmux"
 # ssh = "devbox"
 # label = "devbox"
 # tmux = "tmux"
+# # pin only if two tmux installs: tmux = "/opt/homebrew/bin/tmux"
 `
 
 func WriteExample(path string) error {

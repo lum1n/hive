@@ -84,7 +84,7 @@ func attachLoop(ctx context.Context, att attach.Options, cfg config.Config, host
 		}
 		out, err := attach.Session(ctx, att, host, id)
 		switch out {
-		case attach.OutcomeDetached, attach.OutcomeExited:
+		case attach.OutcomeDetached, attach.OutcomeExited, attach.OutcomeSwitched:
 			return nil
 		case attach.OutcomeGone:
 			fmt.Fprintf(os.Stderr, "hive: %s is gone\n", id.Display())

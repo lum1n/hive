@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/lum1n/hive/internal/cache"
@@ -30,7 +31,7 @@ func TestRefreshEmptyServer(t *testing.T) {
 	}
 	host := config.Host{ID: "local", Local: true}
 	snap := Refresh(context.Background(), run, sshx.Options{}, host)
-	if snap.Status != cache.StatusOnline || len(snap.Sessions) != 0 {
+	if snap.Status != cache.StatusOnline || len(snap.Sessions) != 0 || snap.Error != "no tmux server" {
 		t.Fatalf("%+v", snap)
 	}
 }
@@ -72,5 +73,17 @@ func TestClassifyOffline(t *testing.T) {
 	t.Parallel()
 	if classify("Connection timed out") != cache.StatusOffline {
 		t.Fatal("timeout")
+	}
+}
+
+func TestListInvocationRemoteWrapsDespiteLocalTmux(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,1,0")
+	name, args := listInvocation(sshx.Options{RuntimeDir: t.TempDir()}, config.Host{ID: "mac", SSH: "mac"})
+	if name != "ssh" {
+		t.Fatalf("name=%s", name)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "hive_tmux") || !strings.Contains(joined, "list-sessions") {
+		t.Fatalf("%s", joined)
 	}
 }

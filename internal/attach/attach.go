@@ -29,6 +29,7 @@ const (
 	OutcomeExited
 	OutcomeDisconnected
 	OutcomeGone
+	OutcomeSwitched
 )
 
 func (o Outcome) String() string {
@@ -39,6 +40,8 @@ func (o Outcome) String() string {
 		return "exited"
 	case OutcomeGone:
 		return "gone"
+	case OutcomeSwitched:
+		return "switched"
 	default:
 		return "disconnected"
 	}
@@ -119,7 +122,78 @@ func Session(ctx context.Context, opt Options, host config.Host, id workspace.ID
 		}
 		return OutcomeDisconnected, err
 	}
+	if host.Local && tmux.Inside() {
+		if err := switchClient(ctx, opt, host, id.Session); err == nil {
+			waitForClientReturn(ctx, opt)
+			return OutcomeSwitched, nil
+		}
+	}
+	if tmux.Inside() {
+		return withOuterPassthrough(ctx, opt, func() (Outcome, error) {
+			return runPTY(ctx, opt, host, id)
+		})
+	}
 	return runPTY(ctx, opt, host, id)
+}
+
+func switchClient(ctx context.Context, opt Options, host config.Host, session string) error {
+	run := opt.Runner
+	if run == nil {
+		run = execx.Default
+	}
+	args := tmux.SwitchClient(host.TmuxBin(), host.Socket, session)
+	res := run(ctx, args[0], args[1:]...)
+	if res.Err != nil {
+		return fmt.Errorf("%s", compact(res.ErrText()))
+	}
+	return nil
+}
+
+func waitForClientReturn(ctx context.Context, opt Options) {
+	run := opt.Runner
+	if run == nil {
+		run = execx.Default
+	}
+	client := runOutput(ctx, run, tmux.ClientName())
+	home := runOutput(ctx, run, tmux.PaneSession())
+	if client == "" || home == "" {
+		return
+	}
+	if runOutput(ctx, run, tmux.ClientSession(client)) == home {
+		return
+	}
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			current := runOutput(ctx, run, tmux.ClientSession(client))
+			if current == home {
+				return
+			}
+		}
+	}
+}
+
+func runOutput(ctx context.Context, run execx.Runner, args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	res := run(ctx, args[0], args[1:]...)
+	return strings.TrimSpace(string(res.Stdout))
+}
+
+func withOuterPassthrough(ctx context.Context, opt Options, fn func() (Outcome, error)) (Outcome, error) {
+	run := opt.Runner
+	if run == nil {
+		run = execx.Default
+	}
+	chrome := tmux.ReadOuterChrome(ctx, run)
+	tmux.MuteOuter(ctx, run)
+	defer tmux.RestoreOuter(context.WithoutCancel(ctx), run, chrome)
+	return fn()
 }
 
 func runPTY(ctx context.Context, opt Options, host config.Host, id workspace.ID) (Outcome, error) {
@@ -226,45 +300,53 @@ func indexByte(b []byte, v byte) int {
 	return -1
 }
 
-func attachCmd(opt sshx.Options, host config.Host, session string) *exec.Cmd {
-	remote := tmux.AttachCommand(host.TmuxBin(), host.Socket, session)
-	if host.Local {
-		return exec.Command(remote[0], remote[1:]...)
-	}
-	args := sshx.AttachArgs(opt, host.ID, host.Destination(), host.ControlPath, remote)
-	return exec.Command("ssh", args...)
-}
-
 func hasInvocation(opt sshx.Options, host config.Host, session string) (string, []string) {
-	remote := tmux.HasSession(host.TmuxBin(), host.Socket, session)
-	if host.Local {
-		return remote[0], remote[1:]
-	}
-	return "ssh", sshx.ExecArgs(opt, host.ID, host.Destination(), host.ControlPath, remote)
+	return invocation(opt, host, "has-session", "-t", "="+session)
 }
 
 func createInvocation(opt sshx.Options, host config.Host, session string) (string, []string) {
-	remote := tmux.NewSession(host.TmuxBin(), host.Socket, session)
-	if host.Local {
-		return remote[0], remote[1:]
-	}
-	return "ssh", sshx.ExecArgs(opt, host.ID, host.Destination(), host.ControlPath, remote)
+	return invocation(opt, host, "new-session", "-d", "-s", session)
 }
 
 func killInvocation(opt sshx.Options, host config.Host, session string) (string, []string) {
-	remote := tmux.KillSession(host.TmuxBin(), host.Socket, session)
-	if host.Local {
-		return remote[0], remote[1:]
-	}
-	return "ssh", sshx.ExecArgs(opt, host.ID, host.Destination(), host.ControlPath, remote)
+	return invocation(opt, host, "kill-session", "-t", "="+session)
 }
 
 func renameInvocation(opt sshx.Options, host config.Host, from, to string) (string, []string) {
-	remote := tmux.RenameSession(host.TmuxBin(), host.Socket, from, to)
+	return invocation(opt, host, "rename-session", "-t", "="+from, to)
+}
+
+func invocation(opt sshx.Options, host config.Host, rest ...string) (string, []string) {
+	local := tmux.Cmd(host.Local, host.TmuxBin(), host.Socket, rest...)
 	if host.Local {
-		return remote[0], remote[1:]
+		return local[0], local[1:]
 	}
-	return "ssh", sshx.ExecArgs(opt, host.ID, host.Destination(), host.ControlPath, remote)
+	return "ssh", sshx.ExecArgs(opt, host.ID, host.Destination(), host.ControlPath, local)
+}
+
+func attachCmd(opt sshx.Options, host config.Host, session string) *exec.Cmd {
+	remote := tmux.AttachCmd(host.Local, host.TmuxBin(), host.Socket, session)
+	var cmd *exec.Cmd
+	if host.Local {
+		cmd = exec.Command(remote[0], remote[1:]...)
+	} else {
+		args := sshx.AttachArgs(opt, host.ID, host.Destination(), host.ControlPath, remote)
+		cmd = exec.Command("ssh", args...)
+	}
+	cmd.Env = dropEnv(os.Environ(), "TMUX")
+	return cmd
+}
+
+func dropEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 func Backoff(attempt int) time.Duration {

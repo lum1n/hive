@@ -65,8 +65,6 @@ const (
 
 type model struct {
 	opts     Options
-	ctx      context.Context
-	cancel   context.CancelFunc
 	results  <-chan discover.Result
 	snaps    map[string]cache.HostSnapshot
 	filter   string
@@ -108,8 +106,6 @@ func Run(ctx context.Context, opts Options) (Choice, error) {
 
 	m := model{
 		opts:     opts,
-		ctx:      pctx,
-		cancel:   cancel,
 		results:  ch,
 		snaps:    snaps,
 		prompt:   ti,
@@ -119,14 +115,29 @@ func Run(ctx context.Context, opts Options) (Choice, error) {
 		m.selectID(opts.Last.Display())
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(pctx))
+	// Discovery uses pctx so we can stop it after the picker exits. The TUI
+	// uses the parent ctx so a successful Enter is tea.Quit, not a kill.
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	final, err := p.Run()
 	cancel()
+	return finish(final, err)
+}
+
+func finish(final tea.Model, err error) (Choice, error) {
+	if final != nil {
+		out := final.(model)
+		if out.choice.Action != ActionQuit {
+			return out.choice, nil
+		}
+		if err != nil {
+			return Choice{Action: ActionQuit}, err
+		}
+		return out.choice, nil
+	}
 	if err != nil {
 		return Choice{Action: ActionQuit}, err
 	}
-	out := final.(model)
-	return out.choice, nil
+	return Choice{Action: ActionQuit}, nil
 }
 
 func (m model) Init() tea.Cmd {
@@ -181,7 +192,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.quitting = true
 		m.choice = Choice{Action: ActionQuit}
-		m.cancel()
 		return m, tea.Quit
 	case tea.KeyUp, tea.KeyCtrlK:
 		m.move(-1)
@@ -251,7 +261,6 @@ func (m model) handleName(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.choice.Workspace = workspace.ID{Host: host.ID, Session: name}
 		}
 		m.quitting = true
-		m.cancel()
 		return m, tea.Quit
 	}
 	var cmd tea.Cmd
@@ -273,7 +282,6 @@ func (m model) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			Workspace: workspace.ID{Host: cur.host.ID, Session: cur.session.Name},
 		}
 		m.quitting = true
-		m.cancel()
 		return m, tea.Quit
 	default:
 		m.mode = modeList
@@ -298,7 +306,6 @@ func (m model) submitAttach() (tea.Model, tea.Cmd) {
 			NewName:   name,
 		}
 		m.quitting = true
-		m.cancel()
 		return m, tea.Quit
 	}
 	cur := rows[m.cursor]
@@ -312,7 +319,6 @@ func (m model) submitAttach() (tea.Model, tea.Cmd) {
 		Workspace: workspace.ID{Host: cur.host.ID, Session: cur.session.Name},
 	}
 	m.quitting = true
-	m.cancel()
 	return m, tea.Quit
 }
 
@@ -508,7 +514,11 @@ func (m model) renderRow(r row, selected bool, width int) string {
 	}
 	left := r.host.Display() + "/"
 	if r.empty {
-		left += mutedStyle.Render("(no sessions)")
+		hint := "(no sessions)"
+		if err := m.snaps[r.host.ID].Error; err != "" {
+			hint = "(" + err + ")"
+		}
+		left += mutedStyle.Render(hint)
 	} else {
 		left += r.session.Name
 	}
