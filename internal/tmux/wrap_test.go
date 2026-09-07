@@ -107,6 +107,14 @@ func TestWrapScriptSyntax(t *testing.T) {
 	}
 }
 
+func TestAttachScriptUsesTTY(t *testing.T) {
+	t.Parallel()
+	s := AttachScript("tmux", "", "cavet")
+	if !strings.Contains(s, "exec </dev/tty") {
+		t.Fatalf("%s", s)
+	}
+}
+
 func TestWrapListsLiveServer(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")

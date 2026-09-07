@@ -95,7 +95,7 @@ func ExecArgs(opt Options, hostID, dest, controlPath string, remote []string) []
 
 // AttachArgs builds `ssh -t … dest -- remote`.
 func AttachArgs(opt Options, hostID, dest, controlPath string, remote []string) []string {
-	args := []string{"-t"}
+	args := []string{"-tt"}
 	args = append(args, baseSSH(true)...)
 	args = append(args, muxArgs(opt, hostID, controlPath)...)
 	args = append(args, dest, "--", remoteCommand(remote))
@@ -115,7 +115,8 @@ func remoteCommand(args []string) string {
 
 func decodePipe(script string) string {
 	enc := base64.StdEncoding.EncodeToString([]byte(script))
-	return "printf '%s\\n' " + SingleQuote(enc) + " | { base64 -d 2>/dev/null || base64 -D; } | sh"
+	return "f=$(mktemp 2>/dev/null || mktemp -t hive) && printf '%s\\n' " + SingleQuote(enc) +
+		" | { base64 -d 2>/dev/null || base64 -D; } >\"$f\" && sh \"$f\"; e=$?; rm -f \"$f\"; exit $e"
 }
 
 func SingleQuote(s string) string {

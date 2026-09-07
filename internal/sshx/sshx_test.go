@@ -52,7 +52,15 @@ func TestDecodePipeRuns(t *testing.T) {
 func TestRemoteCommandBase64ForShell(t *testing.T) {
 	t.Parallel()
 	got := remoteCommand([]string{"sh", "-c", "echo hive_ok"})
-	if !strings.Contains(got, "base64") || strings.Contains(got, "echo hive_ok") {
-		t.Fatalf("expected base64 pipe, got %s", got)
+	if !strings.Contains(got, "base64") || !strings.Contains(got, "mktemp") || strings.Contains(got, "echo hive_ok") {
+		t.Fatalf("expected base64 temp script, got %s", got)
+	}
+}
+
+func TestAttachArgsForcesTTY(t *testing.T) {
+	t.Parallel()
+	args := AttachArgs(Options{RuntimeDir: "/tmp/hive"}, "box", "box", "", []string{"sh", "-c", "true"})
+	if args[0] != "-tt" {
+		t.Fatalf("%v", args)
 	}
 }
