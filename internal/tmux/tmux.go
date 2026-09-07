@@ -10,7 +10,10 @@ import (
 	"github.com/lum1n/hive/internal/sshx"
 )
 
-const ListFormat = "#{session_name}\t#{session_windows}\t#{session_attached}\t#{session_activity}"
+const (
+	ListSep    = "\x1f"
+	ListFormat = "#{session_name}" + ListSep + "#{session_windows}" + ListSep + "#{session_attached}" + ListSep + "#{session_activity}"
+)
 
 func Args(bin, socket string, rest ...string) []string {
 	if bin == "" {
@@ -115,27 +118,43 @@ func ParseList(raw string) []cache.Session {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) >= 3 && parts[0] != "" {
-			windows, _ := strconv.Atoi(parts[1])
-			attached := parts[2] == "1"
-			activity := ""
-			if len(parts) > 3 {
-				activity = parts[3]
-			}
-			out = append(out, cache.Session{
-				Name:     parts[0],
-				Windows:  windows,
-				Attached: attached,
-				Activity: activity,
-			})
-			continue
-		}
-		if s, ok := parseClassic(line); ok {
+		if s, ok := parseLine(line); ok {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+func parseLine(line string) (cache.Session, bool) {
+	for _, sep := range []string{ListSep, "\t", "|"} {
+		if s, ok := parseFields(strings.Split(line, sep)); ok {
+			return s, true
+		}
+	}
+	if s, ok := parseClassic(line); ok {
+		return s, true
+	}
+	return parseUnderscore(line)
+}
+
+func parseFields(parts []string) (cache.Session, bool) {
+	if len(parts) < 3 || parts[0] == "" {
+		return cache.Session{}, false
+	}
+	windows, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return cache.Session{}, false
+	}
+	activity := ""
+	if len(parts) > 3 {
+		activity = parts[3]
+	}
+	return cache.Session{
+		Name:     parts[0],
+		Windows:  windows,
+		Attached: atoi(parts[2]) > 0,
+		Activity: activity,
+	}, true
 }
 
 func parseClassic(line string) (cache.Session, bool) {
@@ -159,6 +178,44 @@ func parseClassic(line string) (cache.Session, bool) {
 		Windows:  windows,
 		Attached: strings.Contains(line, "(attached)"),
 	}, true
+}
+
+func parseUnderscore(line string) (cache.Session, bool) {
+	name, activity, ok := cutTrailingInt(line)
+	if !ok {
+		return cache.Session{}, false
+	}
+	name, attached, ok := cutTrailingInt(name)
+	if !ok {
+		return cache.Session{}, false
+	}
+	name, windows, ok := cutTrailingInt(name)
+	if !ok || name == "" {
+		return cache.Session{}, false
+	}
+	return cache.Session{
+		Name:     name,
+		Windows:  windows,
+		Attached: attached > 0,
+		Activity: strconv.Itoa(activity),
+	}, true
+}
+
+func cutTrailingInt(s string) (string, int, bool) {
+	i := strings.LastIndexByte(s, '_')
+	if i <= 0 || i == len(s)-1 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(s[i+1:])
+	if err != nil {
+		return "", 0, false
+	}
+	return s[:i], n, true
+}
+
+func atoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 func MissingServer(message string) bool {

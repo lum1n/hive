@@ -35,6 +35,33 @@ func TestParseListClassic(t *testing.T) {
 	}
 }
 
+func TestParseListUnderscore(t *testing.T) {
+	t.Parallel()
+	raw := "GAS_1_3_1788766403\ncavet_3_1_1788167850\nrepos/ai-command-center_4_0_1788770091\n"
+	got := ParseList(raw)
+	if len(got) != 3 {
+		t.Fatalf("%+v", got)
+	}
+	if got[0].Name != "GAS" || got[0].Windows != 1 || !got[0].Attached {
+		t.Fatalf("GAS: %+v", got[0])
+	}
+	if got[1].Name != "cavet" || got[1].Windows != 3 || !got[1].Attached {
+		t.Fatalf("cavet: %+v", got[1])
+	}
+	if got[2].Name != "repos/ai-command-center" || got[2].Windows != 4 || got[2].Attached {
+		t.Fatalf("repos: %+v", got[2])
+	}
+}
+
+func TestParseListUnitSep(t *testing.T) {
+	t.Parallel()
+	raw := "backend" + ListSep + "3" + ListSep + "1" + ListSep + "1710000000\n"
+	got := ParseList(raw)
+	if len(got) != 1 || got[0].Name != "backend" || got[0].Windows != 3 || !got[0].Attached {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestMissingServer(t *testing.T) {
 	t.Parallel()
 	if !MissingServer("error connecting to /tmp/tmux-1000/default: No such file") {
