@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,9 @@ func TestPreludeFindsMacSockets(t *testing.T) {
 		"$HOME/miniconda3/bin",
 		"/private/tmp/tmux-",
 		"/var/folders",
+		"hive_add_sock",
+		"HIVE_TMUX_SOCKS",
+		"unset TMUX",
 		"lsof",
 		"hive_tmux()",
 	} {
@@ -73,6 +77,26 @@ func TestCmdDirectInsideTmuxLocal(t *testing.T) {
 	got := Cmd(true, "tmux", "", "list-sessions", "-F", "x")
 	if strings.Join(got, " ") != "tmux list-sessions -F x" {
 		t.Fatalf("%v", got)
+	}
+}
+
+func TestPreludeProbesSocketsInsteadOfFirstFile(t *testing.T) {
+	t.Parallel()
+	p := Prelude("tmux", "")
+	if strings.Contains(p, `if [ -z "${TMUX:-}" ]`) {
+		t.Fatal("must not skip socket scan when $TMUX is set")
+	}
+	if !strings.Contains(p, "list-sessions >/dev/null") {
+		t.Fatal("must probe sockets; a dead /tmp socket hid the GUI server")
+	}
+}
+
+func TestWrapScriptSyntax(t *testing.T) {
+	t.Parallel()
+	script := Script("tmux", "", "list-sessions", "-F", "x")
+	cmd := exec.Command("sh", "-n", "-c", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sh -n: %v\n%s", err, out)
 	}
 }
 

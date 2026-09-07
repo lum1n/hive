@@ -39,6 +39,14 @@ func TestArgs(t *testing.T) {
 	}
 }
 
+func TestArgsSocketPath(t *testing.T) {
+	t.Parallel()
+	got := Args("tmux", "/var/folders/xx/yy/T/tmux-501/default", "list-sessions")
+	if strings.Join(got, " ") != "tmux -S /var/folders/xx/yy/T/tmux-501/default list-sessions" {
+		t.Fatalf("%v", got)
+	}
+}
+
 func TestSwitchClient(t *testing.T) {
 	t.Parallel()
 	got := SwitchClient("tmux", "", "backend")

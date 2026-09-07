@@ -18,7 +18,11 @@ func Args(bin, socket string, rest ...string) []string {
 	}
 	args := []string{bin}
 	if socket != "" {
-		args = append(args, "-L", socket)
+		if strings.Contains(socket, "/") {
+			args = append(args, "-S", socket)
+		} else {
+			args = append(args, "-L", socket)
+		}
 	}
 	return append(args, rest...)
 }

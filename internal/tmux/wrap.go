@@ -10,7 +10,9 @@ import (
 // Non-interactive SSH PATH is typically /usr/bin:/bin. tmux from Homebrew,
 // MacPorts, Nix, conda, and the rest never shows up unless we add those dirs
 // and then pick the same binary the live server is running.
-const pathPrelude = `for _d in \
+const pathPrelude = `_saved_tmux=${TMUX:-}
+unset TMUX
+for _d in \
   /opt/homebrew/bin /opt/homebrew/opt/tmux/bin /opt/homebrew/sbin \
   /usr/local/bin /usr/local/opt/tmux/bin \
   /opt/local/bin /usr/pkg/bin /sw/bin \
@@ -36,7 +38,8 @@ export PATH
 
 const binPrelude = `HIVE_TMUX_BIN=""
 if command -v lsof >/dev/null 2>&1; then
-HIVE_TMUX_BIN=$(lsof -nP -c tmux -a -u "$USER" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/tmux$' | head -n 1)
+_user=$(id -un 2>/dev/null || printf %s "$USER")
+HIVE_TMUX_BIN=$(lsof -nP -c tmux -a -u "$_user" -a -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/tmux$' | head -n 1)
 fi
 if [ -z "$HIVE_TMUX_BIN" ]; then
 _pid=$(pgrep -u "$(id -u)" -x tmux 2>/dev/null | head -n 1)
@@ -107,54 +110,124 @@ func Prelude(bin, socket string) string {
 		b.WriteString(binPrelude)
 	}
 	if socket != "" {
-		b.WriteString("HIVE_TMUX_L=" + sshx.SingleQuote(socket) + "\n")
-		b.WriteString("HIVE_TMUX_SOCK=\n")
+		if strings.Contains(socket, "/") {
+			b.WriteString("HIVE_TMUX_SOCK=" + sshx.SingleQuote(socket) + "\n")
+			b.WriteString("HIVE_TMUX_L=\n")
+			b.WriteString("HIVE_TMUX_SOCKS=\n")
+		} else {
+			b.WriteString("HIVE_TMUX_L=" + sshx.SingleQuote(socket) + "\n")
+			b.WriteString("HIVE_TMUX_SOCK=\n")
+			b.WriteString("HIVE_TMUX_SOCKS=\n")
+		}
 	} else {
 		b.WriteString("HIVE_TMUX_L=\n")
+		b.WriteString("HIVE_TMUX_SOCK=\n")
 		b.WriteString(socketPrelude)
 	}
 	b.WriteString(tmuxFn)
 	return b.String()
 }
 
-const socketPrelude = `HIVE_TMUX_SOCK=""
-uid=$(id -u)
-if [ -z "${TMUX:-}" ]; then
-for sock in ${TMUX_TMPDIR:+"$TMUX_TMPDIR/tmux-$uid/default"} "/tmp/tmux-$uid/default" "/private/tmp/tmux-$uid/default" "$HOME/.tmux/tmp/tmux-$uid/default"; do
-[ -n "$sock" ] && [ -S "$sock" ] || continue
-HIVE_TMUX_SOCK=$sock
-break
-done
-if [ -z "$HIVE_TMUX_SOCK" ]; then
-for sock in /tmp/tmux-*/default /private/tmp/tmux-*/default /var/folders/*/*/T/tmux-$uid/default; do
-[ -S "$sock" ] || continue
-HIVE_TMUX_SOCK=$sock
-break
-done
+const socketPrelude = `uid=$(id -u)
+_user=$(id -un 2>/dev/null || printf %s "$USER")
+HIVE_TMUX_SOCKS=""
+hive_add_sock() {
+_sock=$1
+[ -n "$_sock" ] && [ -S "$_sock" ] || return 0
+case "
+$HIVE_TMUX_SOCKS
+" in *"
+$_sock
+"*) return 0 ;; esac
+"$HIVE_TMUX_BIN" -S "$_sock" list-sessions >/dev/null 2>&1 || return 0
+if [ -n "$HIVE_TMUX_SOCKS" ]; then
+HIVE_TMUX_SOCKS="$HIVE_TMUX_SOCKS
+$_sock"
+else
+HIVE_TMUX_SOCKS="$_sock"
 fi
-if [ -z "$HIVE_TMUX_SOCK" ] && command -v lsof >/dev/null 2>&1; then
-HIVE_TMUX_SOCK=$(lsof -nP -c tmux -a -u "$USER" -U -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/tmux-[0-9]*/' | head -n 1)
-fi
+}
+hive_add_sock "${_saved_tmux%%,*}"
+hive_add_sock "${TMUX_TMPDIR:+$TMUX_TMPDIR/tmux-$uid/default}"
+hive_add_sock "/tmp/tmux-$uid/default"
+hive_add_sock "/private/tmp/tmux-$uid/default"
+hive_add_sock "$HOME/.tmux/tmp/tmux-$uid/default"
+for _sock in /tmp/tmux-$uid/* /private/tmp/tmux-$uid/* /tmp/tmux-*/default /private/tmp/tmux-*/default /var/folders/*/*/T/tmux-$uid/*; do
+hive_add_sock "$_sock"
+done
+if command -v lsof >/dev/null 2>&1; then
+while IFS= read -r _sock; do
+hive_add_sock "$_sock"
+done <<EOF
+$(lsof -nP -c tmux -a -u "$_user" -U -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/tmux-')
+EOF
 fi
 `
 
 const tmuxFn = `hive_tmux() {
 if [ -n "$HIVE_TMUX_SOCK" ]; then
 "$HIVE_TMUX_BIN" -S "$HIVE_TMUX_SOCK" "$@"
-elif [ -n "$HIVE_TMUX_L" ]; then
-"$HIVE_TMUX_BIN" -L "$HIVE_TMUX_L" "$@"
-else
-"$HIVE_TMUX_BIN" "$@"
+return $?
 fi
+if [ -n "$HIVE_TMUX_L" ]; then
+"$HIVE_TMUX_BIN" -L "$HIVE_TMUX_L" "$@"
+return $?
+fi
+if [ -n "$HIVE_TMUX_SOCKS" ]; then
+_ec=1
+_listed=0
+while IFS= read -r _sock; do
+[ -n "$_sock" ] || continue
+if [ "$1" = "list-sessions" ]; then
+if _out=$("$HIVE_TMUX_BIN" -S "$_sock" "$@" 2>/dev/null); then
+printf '%s\n' "$_out"
+_listed=1
+_ec=0
+fi
+else
+"$HIVE_TMUX_BIN" -S "$_sock" "$@"
+_ec=$?
+[ "$_ec" -eq 0 ] && return 0
+fi
+done <<SOCKS
+$HIVE_TMUX_SOCKS
+SOCKS
+[ "$_listed" -eq 1 ] && return 0
+return $_ec
+fi
+"$HIVE_TMUX_BIN" "$@"
 }
 hive_tmux_exec() {
 if [ -n "$HIVE_TMUX_SOCK" ]; then
 exec "$HIVE_TMUX_BIN" -S "$HIVE_TMUX_SOCK" "$@"
-elif [ -n "$HIVE_TMUX_L" ]; then
-exec "$HIVE_TMUX_BIN" -L "$HIVE_TMUX_L" "$@"
-else
-exec "$HIVE_TMUX_BIN" "$@"
 fi
+if [ -n "$HIVE_TMUX_L" ]; then
+exec "$HIVE_TMUX_BIN" -L "$HIVE_TMUX_L" "$@"
+fi
+_t=""
+_prev=""
+for _a in "$@"; do
+if [ "$_prev" = "-t" ]; then
+_t=$_a
+break
+fi
+_prev=$_a
+done
+if [ -n "$HIVE_TMUX_SOCKS" ] && [ -n "$_t" ]; then
+while IFS= read -r _sock; do
+[ -n "$_sock" ] || continue
+if "$HIVE_TMUX_BIN" -S "$_sock" has-session -t "$_t" 2>/dev/null; then
+exec "$HIVE_TMUX_BIN" -S "$_sock" "$@"
+fi
+done <<SOCKS
+$HIVE_TMUX_SOCKS
+SOCKS
+fi
+if [ -n "$HIVE_TMUX_SOCKS" ]; then
+_sock=$(printf '%s\n' "$HIVE_TMUX_SOCKS" | head -n 1)
+exec "$HIVE_TMUX_BIN" -S "$_sock" "$@"
+fi
+exec "$HIVE_TMUX_BIN" "$@"
 }
 `
 
