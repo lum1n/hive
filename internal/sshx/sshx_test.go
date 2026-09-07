@@ -60,7 +60,14 @@ func TestRemoteCommandBase64ForShell(t *testing.T) {
 func TestAttachArgsForcesTTY(t *testing.T) {
 	t.Parallel()
 	args := AttachArgs(Options{RuntimeDir: "/tmp/hive"}, "box", "box", "", []string{"sh", "-c", "true"})
+	joined := strings.Join(args, " ")
 	if args[0] != "-tt" {
 		t.Fatalf("%v", args)
+	}
+	if !strings.Contains(joined, "ControlPath=none") || !strings.Contains(joined, "RequestTTY=force") {
+		t.Fatalf("attach must not reuse the listing mux: %s", joined)
+	}
+	if strings.Contains(joined, "ControlMaster=auto") {
+		t.Fatalf("%s", joined)
 	}
 }

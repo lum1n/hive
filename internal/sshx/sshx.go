@@ -84,6 +84,19 @@ func muxArgs(opt Options, hostID, controlPath string) []string {
 	}
 }
 
+func attachMuxArgs(opt Options, hostID, controlPath string) []string {
+	if controlPath != "" {
+		return muxArgs(opt, hostID, controlPath)
+	}
+	// Discovery opens a no-TTY ControlMaster. A slave on that socket cannot
+	// allocate a PTY, so attach uses a fresh connection.
+	return []string{
+		"-o", "ControlMaster=no",
+		"-o", "ControlPath=none",
+		"-o", "RequestTTY=force",
+	}
+}
+
 // ExecArgs builds `ssh -T … dest -- remote`.
 func ExecArgs(opt Options, hostID, dest, controlPath string, remote []string) []string {
 	args := []string{"-T"}
@@ -97,7 +110,7 @@ func ExecArgs(opt Options, hostID, dest, controlPath string, remote []string) []
 func AttachArgs(opt Options, hostID, dest, controlPath string, remote []string) []string {
 	args := []string{"-tt"}
 	args = append(args, baseSSH(true)...)
-	args = append(args, muxArgs(opt, hostID, controlPath)...)
+	args = append(args, attachMuxArgs(opt, hostID, controlPath)...)
 	args = append(args, dest, "--", remoteCommand(remote))
 	return args
 }

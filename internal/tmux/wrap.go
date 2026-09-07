@@ -90,8 +90,7 @@ func Script(bin, socket string, rest ...string) string {
 
 func AttachScript(bin, socket, name string) string {
 	target := sshx.SingleQuote(exact(name))
-	return "exec </dev/tty 2>/dev/null || true\n" +
-		Prelude(bin, socket) +
+	return Prelude(bin, socket) +
 		"hive_tmux set-option -t " + target + " window-size latest 2>/dev/null; " +
 		"hive_tmux set-option -t " + target + " destroy-unattached off 2>/dev/null; " +
 		"hive_tmux_exec -u attach-session -t " + target + "\n"

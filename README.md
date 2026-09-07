@@ -97,5 +97,6 @@ Remote tmux keeps its own prefix. Do not `tmux attach` from inside another tmux 
 ## How listing stays fast
 
 The picker paints the last snapshot from `~/.local/state/hive/` immediately,
-then refreshes hosts in parallel with `ssh -T … tmux list-sessions`. The first
-refresh also opens a ControlMaster so attach does not handshake again.
+then refreshes hosts in parallel with `ssh -T … tmux list-sessions`. Listing
+reuses a ControlMaster; attach opens a fresh SSH TTY because a no-TTY mux
+cannot allocate a PTY for tmux.
