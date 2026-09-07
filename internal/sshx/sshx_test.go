@@ -1,6 +1,7 @@
 package sshx
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -37,5 +38,21 @@ func TestSingleQuote(t *testing.T) {
 	t.Parallel()
 	if SingleQuote("a'b") != `'a'"'"'b'` {
 		t.Fatal(SingleQuote("a'b"))
+	}
+}
+
+func TestDecodePipeRuns(t *testing.T) {
+	t.Parallel()
+	out, err := exec.Command("sh", "-c", decodePipe("echo ok")).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "ok" {
+		t.Fatalf("%v %s", err, out)
+	}
+}
+
+func TestRemoteCommandBase64ForShell(t *testing.T) {
+	t.Parallel()
+	got := remoteCommand([]string{"sh", "-c", "echo hive_ok"})
+	if !strings.Contains(got, "base64") || strings.Contains(got, "echo hive_ok") {
+		t.Fatalf("expected base64 pipe, got %s", got)
 	}
 }

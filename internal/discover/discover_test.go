@@ -69,6 +69,18 @@ func TestRefreshAll(t *testing.T) {
 	}
 }
 
+func TestRefreshUnparsedStdout(t *testing.T) {
+	t.Parallel()
+	run := func(ctx context.Context, name string, args ...string) execx.Result {
+		return execx.Result{Stdout: []byte("not a session line\n")}
+	}
+	host := config.Host{ID: "box", SSH: "box"}
+	snap := Refresh(context.Background(), run, sshx.Options{RuntimeDir: t.TempDir()}, host)
+	if snap.Status != cache.StatusOnline || !strings.Contains(snap.Error, "unparsed:") {
+		t.Fatalf("%+v", snap)
+	}
+}
+
 func TestRefreshEmptyStdout(t *testing.T) {
 	t.Parallel()
 	run := func(ctx context.Context, name string, args ...string) execx.Result {
@@ -95,7 +107,7 @@ func TestListInvocationRemoteWrapsDespiteLocalTmux(t *testing.T) {
 		t.Fatalf("name=%s", name)
 	}
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "hive_tmux") || !strings.Contains(joined, "list-sessions") {
+	if !strings.Contains(joined, "base64") || !strings.Contains(joined, "printf") {
 		t.Fatalf("%s", joined)
 	}
 }

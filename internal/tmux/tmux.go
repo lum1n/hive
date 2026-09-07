@@ -116,23 +116,49 @@ func ParseList(raw string) []cache.Session {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) < 3 || parts[0] == "" {
+		if len(parts) >= 3 && parts[0] != "" {
+			windows, _ := strconv.Atoi(parts[1])
+			attached := parts[2] == "1"
+			activity := ""
+			if len(parts) > 3 {
+				activity = parts[3]
+			}
+			out = append(out, cache.Session{
+				Name:     parts[0],
+				Windows:  windows,
+				Attached: attached,
+				Activity: activity,
+			})
 			continue
 		}
-		windows, _ := strconv.Atoi(parts[1])
-		attached := parts[2] == "1"
-		activity := ""
-		if len(parts) > 3 {
-			activity = parts[3]
+		if s, ok := parseClassic(line); ok {
+			out = append(out, s)
 		}
-		out = append(out, cache.Session{
-			Name:     parts[0],
-			Windows:  windows,
-			Attached: attached,
-			Activity: activity,
-		})
 	}
 	return out
+}
+
+func parseClassic(line string) (cache.Session, bool) {
+	name, rest, ok := strings.Cut(line, ": ")
+	if !ok || name == "" {
+		return cache.Session{}, false
+	}
+	fields := strings.Fields(rest)
+	if len(fields) < 2 {
+		return cache.Session{}, false
+	}
+	if fields[1] != "windows" && fields[1] != "window" {
+		return cache.Session{}, false
+	}
+	windows, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return cache.Session{}, false
+	}
+	return cache.Session{
+		Name:     name,
+		Windows:  windows,
+		Attached: strings.Contains(line, "(attached)"),
+	}, true
 }
 
 func MissingServer(message string) bool {

@@ -20,6 +20,21 @@ func TestParseList(t *testing.T) {
 	}
 }
 
+func TestParseListClassic(t *testing.T) {
+	t.Parallel()
+	raw := "13: 1 windows (created Sun Sep  7 10:00:00 2026)\nPRIV: 10 windows (created Mon Sep  1 09:00:00 2026) (attached)\n"
+	got := ParseList(raw)
+	if len(got) != 2 {
+		t.Fatalf("%+v", got)
+	}
+	if got[0].Name != "13" || got[0].Windows != 1 || got[0].Attached {
+		t.Fatalf("first: %+v", got[0])
+	}
+	if got[1].Name != "PRIV" || got[1].Windows != 10 || !got[1].Attached {
+		t.Fatalf("second: %+v", got[1])
+	}
+}
+
 func TestMissingServer(t *testing.T) {
 	t.Parallel()
 	if !MissingServer("error connecting to /tmp/tmux-1000/default: No such file") {

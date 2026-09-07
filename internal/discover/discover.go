@@ -42,6 +42,9 @@ func Refresh(ctx context.Context, run execx.Runner, opt sshx.Options, host confi
 	err := ""
 	if len(sessions) == 0 {
 		err = compact(string(res.Stderr))
+		if err == "" && strings.TrimSpace(string(res.Stdout)) != "" {
+			err = "unparsed: " + compact(string(res.Stdout))
+		}
 		if err == "" {
 			err = "no sessions"
 		}

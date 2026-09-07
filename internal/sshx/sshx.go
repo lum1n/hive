@@ -2,6 +2,7 @@ package sshx
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -102,11 +103,19 @@ func AttachArgs(opt Options, hostID, dest, controlPath string, remote []string) 
 }
 
 func remoteCommand(args []string) string {
+	if len(args) >= 3 && args[0] == "sh" && args[1] == "-c" {
+		return decodePipe(args[2])
+	}
 	parts := make([]string, len(args))
 	for i, a := range args {
 		parts[i] = SingleQuote(a)
 	}
 	return strings.Join(parts, " ")
+}
+
+func decodePipe(script string) string {
+	enc := base64.StdEncoding.EncodeToString([]byte(script))
+	return "printf '%s\\n' " + SingleQuote(enc) + " | { base64 -d 2>/dev/null || base64 -D; } | sh"
 }
 
 func SingleQuote(s string) string {
