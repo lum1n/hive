@@ -205,18 +205,22 @@ break
 fi
 _prev=$_a
 done
+_sock=""
 if [ -n "$HIVE_TMUX_SOCKS" ] && [ -n "$_t" ]; then
-while IFS= read -r _sock; do
-[ -n "$_sock" ] || continue
-if "$HIVE_TMUX_BIN" -S "$_sock" has-session -t "$_t" 2>/dev/null; then
-exec "$HIVE_TMUX_BIN" -S "$_sock" "$@"
+while IFS= read -r _s; do
+[ -n "$_s" ] || continue
+if "$HIVE_TMUX_BIN" -S "$_s" has-session -t "$_t" </dev/null 2>/dev/null; then
+_sock=$_s
+break
 fi
 done <<SOCKS
 $HIVE_TMUX_SOCKS
 SOCKS
 fi
-if [ -n "$HIVE_TMUX_SOCKS" ]; then
+if [ -z "$_sock" ] && [ -n "$HIVE_TMUX_SOCKS" ]; then
 _sock=$(printf '%s\n' "$HIVE_TMUX_SOCKS" | head -n 1)
+fi
+if [ -n "$_sock" ]; then
 exec "$HIVE_TMUX_BIN" -S "$_sock" "$@"
 fi
 exec "$HIVE_TMUX_BIN" "$@"

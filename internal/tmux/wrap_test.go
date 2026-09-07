@@ -1,7 +1,9 @@
 package tmux
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -104,6 +106,42 @@ func TestWrapScriptSyntax(t *testing.T) {
 	cmd := exec.Command("sh", "-n", "-c", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sh -n: %v\n%s", err, out)
+	}
+	attach := AttachScript("tmux", "", "cavet")
+	cmd = exec.Command("sh", "-n", "-c", attach)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("attach sh -n: %v\n%s", err, out)
+	}
+}
+
+func TestHiveTmuxExecKeepsCallerStdin(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "tmux")
+	body := "#!/bin/sh\n" +
+		`if [ "$1" = "-S" ]; then shift 2; fi` + "\n" +
+		`if [ "$1" = "has-session" ]; then exit 0; fi` + "\n" +
+		"cat\n"
+	if err := os.WriteFile(fake, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := tmuxFn +
+		"HIVE_TMUX_BIN=" + sshx.SingleQuote(fake) + "\n" +
+		"HIVE_TMUX_SOCK=\nHIVE_TMUX_L=\n" +
+		"HIVE_TMUX_SOCKS='/sock-a\n/sock-b'\n" +
+		"hive_tmux_exec -u attach-session -t =cavet\n"
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Stdin = strings.NewReader("MARKER\n")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "MARKER") {
+		t.Fatalf("attach stdin must stay the caller stream, got %q", got)
+	}
+	if strings.Contains(got, "/sock-b") {
+		t.Fatalf("attach inherited the socket heredoc: %q", got)
 	}
 }
 
