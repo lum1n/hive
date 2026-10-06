@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/lum1n/hive/internal/agents"
 	"github.com/lum1n/hive/internal/attach"
 	"github.com/lum1n/hive/internal/cache"
 	"github.com/lum1n/hive/internal/config"
@@ -20,6 +22,35 @@ type Options struct {
 	Config config.Config
 	Store  *cache.Store
 	SSH    sshx.Options
+}
+
+func RunAgent(ctx context.Context, att attach.Options, client agents.Client, id, initiatingClient string) error {
+	ref, err := agents.ParseReference(id)
+	if err != nil {
+		return err
+	}
+	address := workspace.ID{Host: ref.Host, Session: ref.Pane}
+	for attempt := 0; ; attempt++ {
+		out, err := attach.Agent(ctx, att, client, id, initiatingClient)
+		switch out {
+		case attach.OutcomeDetached, attach.OutcomeExited, attach.OutcomeSwitched:
+			return err
+		case attach.OutcomeGone:
+			return err
+		case attach.OutcomeDisconnected:
+			var failure *agents.Failure
+			if !errors.As(err, &failure) || (failure.Code != "offline" && failure.Code != "timeout") {
+				if err == nil {
+					err = fmt.Errorf("agent connection failed")
+				}
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "hive: %s\n", err)
+			if waitReconnect(ctx, client.Config, address, attach.Backoff(attempt)) {
+				return ctx.Err()
+			}
+		}
+	}
 }
 
 func Run(ctx context.Context, opt Options) error {

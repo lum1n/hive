@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lum1n/hive/internal/agentcli"
 	"github.com/lum1n/hive/internal/app"
 	"github.com/lum1n/hive/internal/cache"
 	"github.com/lum1n/hive/internal/config"
@@ -21,6 +23,10 @@ import (
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "hive: %v\n", err)
+		var exit *agentcli.ExitError
+		if errors.As(err, &exit) {
+			os.Exit(exit.Code)
+		}
 		os.Exit(1)
 	}
 }
@@ -43,6 +49,15 @@ func run() error {
 		}
 		fmt.Printf("wrote %s\n", *configPath)
 		return nil
+	}
+
+	if args := flag.Args(); len(args) > 0 {
+		if args[0] != "agents" {
+			return fmt.Errorf("unknown command; use hive agents or run hive without arguments")
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return agentcli.Run(ctx, args[1:], *configPath, os.Stdout, os.Stderr)
 	}
 
 	if _, err := os.Stat(*configPath); err != nil {

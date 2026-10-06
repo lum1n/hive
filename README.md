@@ -77,6 +77,51 @@ Override the file with `-config` or `HIVE_CONFIG`.
 `hive -dump` prints each host’s status and sessions without the TUI.
 `hive -version` prints the build.
 
+## Headless agent API
+
+Hive can discover Copilot CLI, Claude Code, Codex, Pi, OpenCode, and Cursor
+Agent panes on configured hosts without opening the picker:
+
+```sh
+hive agents capabilities --json
+hive agents list --json
+hive agents list --host devbox --json
+hive agents capture --id '<id from listing>' --lines 200 --json
+hive agents attach --id '<id from listing>'
+```
+
+Repeat `--id` to capture up to 16 agents in one batch. Requests are grouped by
+host and reuse SSH connections. Each reference identifies a host, canonical
+tmux socket, server generation, and pane; renames do not invalidate it, but
+server restarts do. Attachment selects the exact pane. Inside the same local
+tmux server, it switches the initiating client instead of nesting tmux; use
+`--client` when multiple clients make the origin ambiguous.
+
+Remote hosts need only their existing SSH, tmux, and standard OS tools.
+Neither Hive nor Python needs to be installed remotely. Detection supports
+interpreter wrappers and process descendants. An explicit pane override can
+mark a wrapper or exclude a pane:
+
+```sh
+tmux set-option -p -t %12 @agent-overview-kind copilot
+tmux set-option -p -t %13 @agent-overview-kind off
+```
+
+Agent listing is metadata-only and initially reports `unknown`. Captures
+provide conservative heuristic states, not authoritative agent-watcher state.
+These commands do not use the picker cache or write previews to disk.
+`capabilities` does not read configuration or contact hosts. Other commands
+contact only configured hosts; `--host` narrows listing.
+
+JSON commands exit 0 on success, 2 for partial/operational failures with a
+complete JSON response, and 1 for invalid requests/configuration. Diagnostics
+are on stderr. Flags such as `--config` and `--timeout` can follow the agent
+subcommand; existing global flags still work before `agents`.
+
+See [the version-1 agent contract](docs/agents.md) for schemas, bounds,
+failure codes, and integration guidance. The default session picker and
+`hive -dump` remain unchanged; an interactive agent picker is not included.
+
 ## Keys
 
 | Where | Key | Action |

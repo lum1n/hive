@@ -197,7 +197,10 @@ func withOuterPassthrough(ctx context.Context, opt Options, fn func() (Outcome, 
 }
 
 func runPTY(ctx context.Context, opt Options, host config.Host, id workspace.ID) (Outcome, error) {
-	cmd := attachCmd(opt.SSH, host, id.Session)
+	return runPTYCommand(ctx, opt, attachCmd(opt.SSH, host, id.Session))
+}
+
+func runPTYCommand(ctx context.Context, opt Options, cmd *exec.Cmd) (Outcome, error) {
 	cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil {
 		cols, rows = 80, 24
