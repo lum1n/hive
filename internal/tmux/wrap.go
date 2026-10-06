@@ -128,7 +128,11 @@ _user=$(id -un 2>/dev/null || printf %s "$USER")
 HIVE_TMUX_SOCKS=""
 hive_add_sock() {
 _sock=$1
+if ! [ -S "$_sock" ]; then
+_sock=$(printf '%s\n' "$_sock" | sed 's/ (type=[^)]*)$//')
+fi
 [ -n "$_sock" ] && [ -S "$_sock" ] || return 0
+case "$_sock" in *.agent-watcher.sock) return 0 ;; esac
 case "
 $HIVE_TMUX_SOCKS
 " in *"
@@ -141,19 +145,23 @@ else
 HIVE_TMUX_SOCKS="$_sock"
 fi
 }
+_live_socket_scan=0
 if command -v lsof >/dev/null 2>&1; then
+_live_socket_scan=1
 while IFS= read -r _sock; do
 hive_add_sock "$_sock"
 done <<EOF
-$(lsof -nP -c tmux -a -u "$_user" -U -Fn 2>/dev/null | sed -n 's/^n//p' | sed 's/ (.*//' | grep tmux-)
+$(lsof -nP -c tmux -a -u "$_user" -U -Fn 2>/dev/null | sed -n 's/^n//p')
 EOF
 fi
 hive_add_sock "${_saved_tmux%%,*}"
 hive_add_sock "${TMUX_TMPDIR:+$TMUX_TMPDIR/tmux-$uid/default}"
 hive_add_sock "${TMPDIR:+${TMPDIR%/}/tmux-$uid/default}"
+if [ "$_live_socket_scan" -eq 0 ] || [ -z "$HIVE_TMUX_SOCKS" ]; then
 for _sock in /var/folders/*/*/T/tmux-$uid/* /private/tmp/tmux-$uid/* "$HOME/.tmux/tmp/tmux-$uid/"* /tmp/tmux-$uid/* /private/tmp/tmux-*/default /tmp/tmux-*/default; do
 hive_add_sock "$_sock"
 done
+fi
 `
 
 const tmuxFn = `hive_tmux() {

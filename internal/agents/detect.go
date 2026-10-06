@@ -68,7 +68,7 @@ func descendantKind(root int, processes map[int]process) string {
 		kind := Detect(p.command)
 		if kind == "" {
 			switch path.Base(p.command) {
-			case "node", "bun", "deno":
+			case "node", "bun", "deno", "MainThread":
 				kind = Detect(p.args)
 			}
 		}

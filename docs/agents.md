@@ -13,10 +13,24 @@ attachment. It does not require a remote Hive installation or daemon.
 | `hive agents capture --json --id REF [--id REF ...] [--lines 200]` | Bounded batch capture of selected agents |
 | `hive agents attach --id REF [--client CLIENT]` | Interactive exact-pane attachment |
 
+`hive agents` and `hive agents list` without `--json` open the interactive
+agent picker. `hive agents --json` is an alias for `hive agents list --json`.
+The picker shares the session picker's appearance and fuzzy matching, discovers
+hosts incrementally with at most four concurrent operations, and keeps metadata
+and selection in memory only. Enter attaches to the selected exact reference;
+the configured detach key returns from PTY attachment to the picker.
+Ctrl-r refreshes; esc clears the filter or exits; ctrl-c quits.
+No match never creates a session, and session rename/kill shortcuts are disabled.
+`--host ID` restricts discovery; `--client CLIENT` disambiguates local focus.
+
 Every command accepts `--config PATH` and `--timeout DURATION`. Timeout applies
 to each host operation, defaults to 12 seconds, and must be positive and at
 most 60 seconds. Global `-config` also works before `agents`. JSON commands
-require `--json`; attach requires a terminal and cannot emit JSON.
+use `--json`; capture and capabilities require it. Interactive listing and
+attach require a terminal; attach cannot emit JSON.
+`hive --help`, `hive agents --help`, and `hive agents <command> --help`
+show usage and examples without loading configuration, opening a terminal UI,
+or contacting hosts. `-h` is an alias; `hive agents --help` shows group help.
 
 The capabilities response includes `version`, `commands`, `kinds`,
 `max_targets`, `max_lines`, and `max_bytes`. Consumers must reject unsupported
@@ -48,6 +62,16 @@ Host/server collections and agent collections are arrays, including when
 empty. Offline or failed discovery is never represented as a healthy empty
 inventory. Successfully queried servers with no detected agents have an empty
 `agents` array. Linked panes occur once per server, with multiple memberships.
+Discovery uses two batched pane-metadata reads per server, not per-pane tmux
+requests. Metadata is length-framed and encoded, so Unicode, tabs, newlines,
+commas, and shell-like labels cannot corrupt the inventory protocol.
+Probes explicitly request UTF-8 tmux output, including over SSH with a `C`
+or unset locale. Otherwise tmux can replace Unicode labels with underscores,
+invalidating metadata byte lengths and losing captured text.
+Socket discovery skips `*.agent-watcher.sock` control sockets and prefers
+live-process socket discovery over directory sweeps when available. Watcher
+control sockets speak a different protocol and must not be queried as tmux
+servers.
 
 References are locators, not credentials. Hive validates their fields,
 resolves only configured hosts and same-user discovered/pinned sockets, and
@@ -88,9 +112,14 @@ Listing accepts up to 64 hosts, 64 server candidates per host, and 4096 pane
 membership records per host. A host process snapshot is limited to 8192
 process records; targeted interpreter arguments are limited to 128 processes
 and 8192 bytes each. Probe output is capped at 4 MiB and stderr at 8 KiB.
-Interpreter arguments are inspected only for `node`, `bun`, and `deno`
-processes descended from eligible panes, not unrelated host processes.
+Interpreter arguments are inspected only for `node`, `bun`, `deno`, and
+Linux Node.js `MainThread` processes descended from eligible panes, not
+unrelated host processes. Generic `MainThread` processes are not agents:
+their arguments must identify a supported agent module.
 Excluded, dead, and plugin-owned panes are not argument-inspection roots.
+Bubblewrap (`bwrap`) launchers are followed through their host-visible
+parent/child process relationships. Detection does not enter the sandbox
+or require access to paths inside its filesystem.
 
 Errors contain `code` and a bounded, content-free `message`. Codes include
 `auth`, `offline`, `timeout`, `cancelled`, `unavailable`, `discovery`,

@@ -95,6 +95,49 @@ func TestSanitizationAndStates(t *testing.T) {
 	}
 }
 
+func TestLinuxMainThreadDescendants(t *testing.T) {
+	for _, fixture := range []struct{ args, kind string }{
+		{"/x/cursor-agent/cli.js --resume", "cursor"},
+		{"node /x/@github/copilot/index.js", "copilot"},
+		{"node /x/@anthropic-ai/claude-code/cli.js", "claude"},
+		{"node /x/unrelated/main.js", ""},
+		{"", ""},
+	} {
+		processes := map[int]process{
+			1: {command: "sh"},
+			2: {parent: 1, command: "bwrap"},
+			3: {parent: 2, command: "bwrap"},
+			4: {parent: 3, command: "MainThread", args: fixture.args},
+		}
+		if got := descendantKind(1, processes); got != fixture.kind {
+			t.Fatalf("MainThread kind: got %q, expected %q", got, fixture.kind)
+		}
+		if Detect("MainThread") != "" {
+			t.Fatal("generic Linux thread name was treated as an agent")
+		}
+		processes[5] = process{parent: 1, command: "codex"}
+		if fixture.kind != "" && descendantKind(1, processes) != "" {
+			t.Fatal("ambiguous MainThread descendants were attributed")
+		}
+	}
+	raw := "V\t1\nP\t" + b64("1 0 sh\n2 1 bwrap\n3 2 bwrap\n4 3 MainThread") +
+		"\nA\t4\t" + b64("/x/cursor-agent/cli.js --resume") +
+		"\nS\t" + b64("/fixture.sock") + "\t123:1700000000\n" +
+		paneFixture("%1", "$1", "", "0", "0", "fixture", "unrecognized")
+	servers, err := parseInventory([]byte(raw), "box", time.Now())
+	if err != nil || len(servers) != 1 || len(servers[0].Agents) != 1 || servers[0].Agents[0].Kind != "cursor" {
+		t.Fatal("Linux MainThread agent was not inventoried")
+	}
+	ref := testReference("box", "/fixture.sock")
+	raw = "V\t1\nP\t" + b64("1 0 sh\n2 1 bwrap\n3 2 bwrap\n4 3 MainThread") +
+		"\nA\t4\t" + b64("/x/cursor-agent/cli.js --resume") +
+		"\nC\t0\t0\t1\t\t" + b64("unrecognized") + "\t" + b64("synthetic") + "\n"
+	captures, err := parseCaptures([]byte(raw), []Reference{ref})
+	if err != nil || len(captures) != 1 || captures[0].Error != nil {
+		t.Fatal("Linux MainThread agent capture failed liveness detection")
+	}
+}
+
 func inventoryFixture() string {
 	return "V\t1\nP\t" + b64("1 0 sh\n2 1 node") + "\nA\t2\t" + b64("node /x/@github/copilot/index.js") +
 		"\nS\t" + b64("/fixture.sock") + "\t123:1700000000\n" + paneFixture("%1", "$1", "", "0", "0", "shell\tname\n", "node")
@@ -167,5 +210,29 @@ func TestProcessArgumentRecordLimits(t *testing.T) {
 	records = append(records, records[1])
 	if _, err := parseProcesses(records); err == nil {
 		t.Fatal("accepted duplicate argument records")
+	}
+}
+
+func TestBatchedInventoryMetadata(t *testing.T) {
+	var metadata strings.Builder
+	for _, value := range []string{"copilot", "cat", "/fixture,\tpath", "name \u754c,\nline", "window: $(literal)"} {
+		fmt.Fprintf(&metadata, "%d:%s,", len(value), value)
+	}
+	prefix := "V\t1\nP\t" + b64("1 0 sh") + "\nS\t" + b64("/fixture.sock") + "\t123:1700000000\nI\t"
+	row := "%1 @1 $1 1 1 0 0\t" + metadata.String()
+	servers, err := parseInventory([]byte(prefix+b64(row)+"\n"), "local", time.Now())
+	if err != nil || len(servers[0].Agents) != 1 ||
+		servers[0].Agents[0].Members[0].SessionName != "name \u754c, line" {
+		t.Fatal("length-framed metadata failed")
+	}
+	for _, invalid := range []string{
+		"header", row + "extra", strings.Replace(row, "7:copilot", "-1:copilot", 1),
+		strings.Replace(row, "7:copilot", "99999:copilot", 1),
+		strings.Replace(row, "7:copilot", "8:copilot", 1),
+		strings.Repeat(row+"\n", 4097),
+	} {
+		if _, err := parseInventory([]byte(prefix+b64(invalid)+"\n"), "local", time.Now()); err == nil {
+			t.Fatal("accepted malformed or oversized metadata batch")
+		}
 	}
 }

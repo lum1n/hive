@@ -24,6 +24,31 @@ type Options struct {
 	SSH    sshx.Options
 }
 
+func RunAgentPicker(ctx context.Context, client agents.Client, initiatingClient string) error {
+	pb, err := client.Config.PrefixByte()
+	if err != nil {
+		return err
+	}
+	att := attach.Options{SSH: client.SSH, Prefix: pb}
+	last, status := "", ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		id, err := picker.RunAgents(ctx, picker.AgentOptions{Client: client, Last: last, Status: status})
+		if err != nil {
+			return err
+		}
+		if id == "" {
+			return nil
+		}
+		last, status = id, ""
+		if err := RunAgent(ctx, att, client, id, initiatingClient); err != nil {
+			status = err.Error()
+		}
+	}
+}
+
 func RunAgent(ctx context.Context, att attach.Options, client agents.Client, id, initiatingClient string) error {
 	ref, err := agents.ParseReference(id)
 	if err != nil {

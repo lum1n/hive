@@ -1,6 +1,7 @@
 package agentcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/lum1n/hive/internal/agents"
@@ -37,13 +39,75 @@ func (r *references) Set(value string) error {
 	return nil
 }
 
-func Run(ctx context.Context, args []string, configPath string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: hive agents capabilities|list|capture|attach")
+const groupHelp = `Usage: hive agents [flags]
+       hive agents <command> [flags]
+
+Open the interactive agent picker across configured local and SSH hosts.
+Type to filter; arrows or ctrl-j/k move; enter attaches to the exact pane.
+Ctrl-r refreshes, esc clears the filter or exits, and ctrl-c quits.
+Ctrl-space detaches back to the picker without stopping the agent.
+Use --json for a headless inventory instead.
+
+Commands:
+  capabilities  Show the API version, supported agents, and limits
+  list          Open the picker, or discover agent panes with --json
+  capture       Fetch bounded previews (--json and --id required)
+  attach        Attach to the exact agent pane (--id and a terminal required)
+
+Examples:
+  hive agents
+  hive agents --host devbox
+  hive agents --json
+  hive agents capabilities --json
+  hive agents list --host local --json
+  hive agents capture --id '<reference>' --lines 200 --json
+  hive agents attach --id '<reference>'
+
+Use hive agents <command> --help for command flags and examples.
+Both -h and --help work at every command level.
+Help never loads configuration, opens the picker, or contacts hosts.
+`
+
+var commandHelp = map[string]struct{ usage, description, examples string }{
+	"capabilities": {"hive agents capabilities --json",
+		"Show versioned API capabilities without reading configuration or contacting hosts.",
+		"  hive agents capabilities --json\n"},
+	"list": {"hive agents list [--json] [--host ID]",
+		"Open the interactive agent picker, or print versioned metadata with --json.\nExit 2 still emits complete JSON when a host or server is unavailable.",
+		"  hive agents list\n  hive agents list --json\n  hive agents list --host local --timeout 30s --json\n"},
+	"capture": {"hive agents capture --json --id REF [--id REF ...] [--lines 200]",
+		"Capture up to 16 agent previews, batched by host, with 1-500 lines and at most 64 KiB per preview.\nUse the opaque id from list; failed targets remain in the JSON response (exit 2).",
+		"  hive agents capture --id '<reference>' --lines 200 --json\n  hive agents capture --id '<first>' --id '<second>' --json\n"},
+	"attach": {"hive agents attach --id REF [--client CLIENT]",
+		"Attach to the exact agent pane in a terminal, or switch the initiating same-server client.\nReferences survive renames but not server restarts. Ctrl-space detaches without stopping the agent.",
+		"  hive agents attach --id '<reference>'\n  hive agents attach --id '<reference>' --client /dev/ttys001\n"},
+}
+
+func WriteHelp(w io.Writer, flags *flag.FlagSet, usage, examples string) error {
+	var text bytes.Buffer
+	text.WriteString(usage)
+	if flags != nil {
+		text.WriteString("\nFlags:\n")
+		output := flags.Output()
+		flags.SetOutput(&text)
+		flags.PrintDefaults()
+		flags.SetOutput(output)
+		text.WriteString("  -h, --help\n\tshow usage and examples and exit\n")
 	}
-	command := args[0]
-	if command != "capabilities" && command != "list" && command != "capture" && command != "attach" {
-		return fmt.Errorf("unknown agents command")
+	text.WriteString(examples)
+	_, err := text.WriteTo(w)
+	return err
+}
+
+func Run(ctx context.Context, args []string, configPath string, stdout, stderr io.Writer) error {
+	command := "list"
+	group := len(args) == 0 || strings.HasPrefix(args[0], "-")
+	if !group {
+		command, args = args[0], args[1:]
+	}
+	details, ok := commandHelp[command]
+	if !ok {
+		return fmt.Errorf("unknown agents command; use hive agents --help")
 	}
 	flags := flag.NewFlagSet("hive agents "+command, flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -56,6 +120,7 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 	switch command {
 	case "list":
 		host = flags.String("host", "", "only this configured host")
+		initiatingClient = flags.String("client", "", "initiating local tmux client for interactive attachment")
 	case "capture":
 		flags.Var(&ids, "id", "agent reference; repeat for a batch")
 		flags.IntVar(&lines, "lines", 200, "maximum captured rows")
@@ -63,9 +128,18 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 		flags.Var(&ids, "id", "agent reference")
 		initiatingClient = flags.String("client", "", "initiating local tmux client")
 	}
-	if err := flags.Parse(args[1:]); err != nil {
+	var helpErr error
+	flags.Usage = func() {
+		if group {
+			helpErr = WriteHelp(stderr, flags, groupHelp, "")
+			return
+		}
+		helpErr = WriteHelp(stderr, flags, "Usage: "+details.usage+"\n\n"+details.description+"\n",
+			"\nExamples:\n"+details.examples)
+	}
+	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return nil
+			return helpErr
 		}
 		return err
 	}
@@ -75,8 +149,12 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 	if command == "attach" && (*jsonOutput || len(ids) != 1) {
 		return fmt.Errorf("attach needs exactly one --id and does not support --json")
 	}
-	if command != "attach" && !*jsonOutput {
+	if command != "attach" && command != "list" && !*jsonOutput {
 		return fmt.Errorf("headless agent commands require --json")
+	}
+	if command == "list" && !*jsonOutput &&
+		(!term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd()))) {
+		return fmt.Errorf("agent picker needs a terminal; use hive agents list --json")
 	}
 	if command == "capabilities" {
 		return json.NewEncoder(stdout).Encode(struct {
@@ -128,6 +206,13 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 	client := agents.Client{Config: cfg, SSH: opt, Timeout: *timeout}
 	switch command {
 	case "list":
+		if !*jsonOutput {
+			if *host != "" {
+				selected, _ := cfg.Host(*host)
+				client.Config.Hosts = []config.Host{selected}
+			}
+			return app.RunAgentPicker(ctx, client, *initiatingClient)
+		}
 		response, err := client.List(ctx, *host)
 		if err != nil {
 			return err

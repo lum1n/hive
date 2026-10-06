@@ -77,13 +77,40 @@ Override the file with `-config` or `HIVE_CONFIG`.
 `hive -dump` prints each host’s status and sessions without the TUI.
 `hive -version` prints the build.
 
-## Headless agent API
+Use `hive --help`, `hive agents --help`, or
+`hive agents <command> --help` for usage, flags, and examples.
+`-h` also works. Help never requires configuration, a terminal, or a host
+connection.
+
+## Agents
+
+`hive agents` opens an agent picker with the same appearance and fuzzy
+filtering as the session picker. Rows show the host/session, agent kind,
+window/pane, and project path. Agents arrive as each host responds; an
+unavailable host does not delay other hosts or appear as a healthy empty list.
+
+```sh
+hive agents
+hive agents --host devbox
+hive agents list
+```
+
+Type to filter by host, session, window, agent kind, pane, or path. Use arrows
+or ctrl-j/k to move, enter to attach to the exact agent pane, ctrl-r to refresh,
+esc to clear the filter or exit, and ctrl-c to quit. The configured detach key
+(ctrl-space by default) returns to the picker after a PTY attachment. Same-server
+local attachment inside tmux switches the existing client; return with your
+normal tmux navigation. Agent mode does not create, rename, or kill sessions.
+Inventory and selection remain memory-only; it does not capture pane previews.
+
+### Headless agent API
 
 Hive can discover Copilot CLI, Claude Code, Codex, Pi, OpenCode, and Cursor
 Agent panes on configured hosts without opening the picker:
 
 ```sh
 hive agents capabilities --json
+hive agents --json
 hive agents list --json
 hive agents list --host devbox --json
 hive agents capture --id '<id from listing>' --lines 200 --json
@@ -112,6 +139,10 @@ provide conservative heuristic states, not authoritative agent-watcher state.
 These commands do not use the picker cache or write previews to disk.
 `capabilities` does not read configuration or contact hosts. Other commands
 contact only configured hosts; `--host` narrows listing.
+Pane metadata is read in batches per server, including linked memberships,
+rather than starting multiple tmux processes for every pane.
+Socket discovery excludes tmux-agent-state's `*.agent-watcher.sock` companion
+sockets; they are not tmux servers and cannot answer tmux queries.
 
 JSON commands exit 0 on success, 2 for partial/operational failures with a
 complete JSON response, and 1 for invalid requests/configuration. Diagnostics
@@ -120,7 +151,7 @@ subcommand; existing global flags still work before `agents`.
 
 See [the version-1 agent contract](docs/agents.md) for schemas, bounds,
 failure codes, and integration guidance. The default session picker and
-`hive -dump` remain unchanged; an interactive agent picker is not included.
+`hive -dump` remain unchanged.
 
 ## Keys
 

@@ -190,7 +190,7 @@ func TestNativeMultipleServersOnOneHost(t *testing.T) {
 }
 
 func TestNativeWrapperFilteringAndLimits(t *testing.T) {
-	snapshot := "10 1 sh\n11 10 node\n12 11 bun\n13 10 /fixture with spaces/node\n20 1 node\n30 31 node\n31 30 node"
+	snapshot := "10 1 sh\n11 10 node\n12 11 bun\n13 10 /fixture with spaces/node\n14 17 MainThread\n15 20 MainThread\n16 10 bwrap\n17 16 bwrap\n20 1 node\n30 31 node\n31 30 node"
 	for _, roots := range []string{"", " 10"} {
 		script := "_processes=" + sshx.SingleQuote(snapshot) + "\n_roots=" + sshx.SingleQuote(roots) +
 			"\nhive_b64() { base64 | tr -d '\\r\\n'; }\nps() { printf 'synthetic-wrapper'; }\n" + wrapperProbe
@@ -209,7 +209,7 @@ func TestNativeWrapperFilteringAndLimits(t *testing.T) {
 			}
 			seen[fields[1]] = true
 		}
-		if roots == "" && len(seen) != 0 || roots != "" && (len(seen) != 3 || !seen["11"] || !seen["12"] || !seen["13"]) {
+		if roots == "" && len(seen) != 0 || roots != "" && (len(seen) != 4 || !seen["11"] || !seen["12"] || !seen["13"] || !seen["14"]) {
 			t.Fatal("wrapper arguments were not restricted to pane descendants")
 		}
 	}
@@ -219,7 +219,7 @@ func TestNativeWrapperFilteringAndLimits(t *testing.T) {
 	}
 	for _, fixture := range []struct{ snapshot, args string }{
 		{snapshot: many.String(), args: "synthetic"},
-		{snapshot: "11 10 node", args: strings.Repeat("x", 8193)},
+		{snapshot: "11 10 MainThread", args: strings.Repeat("x", 8193)},
 	} {
 		script := "_processes=" + sshx.SingleQuote(fixture.snapshot) +
 			"\n_roots='10'\nhive_b64() { base64 | tr -d '\\r\\n'; }\nps() { printf %s " +
@@ -264,4 +264,75 @@ func TestNativeCaptureByteAndDimensionLimits(t *testing.T) {
 			t.Fatal("excessive source dimensions were not rejected")
 		}
 	}
+
+}
+
+func TestNativeLargeLinkedInventoryAndMetadata(t *testing.T) {
+	host, pane := nativeFixture(t)
+	for index := 1; index < 55; index++ {
+		nativeRun(t, host, "new-session", "-d", "-t", "fixture", "-s", fmt.Sprintf("linked-%d", index))
+	}
+	owned := nativeRun(t, host, "split-window", "-d", "-I", "-P", "-F", "#{pane_id}")
+	nativeRun(t, host, "set-option", "-p", "-t", owned, "@agent-overview-owned", "1")
+	name := "fixture \u754c,\tnew\nline: $(not-a-command)"
+	nativeRun(t, host, "rename-window", "-t", pane, name)
+	name = nativeRun(t, host, "display-message", "-p", "-t", pane, "#{window_name}")
+	client := Client{Config: config.Config{Hosts: []config.Host{host}},
+		Runner: syntheticProcesses, Timeout: 3 * time.Second}
+	started := time.Now()
+	response, err := client.List(context.Background(), "")
+	elapsed := time.Since(started)
+	if err != nil || response.Hosts[0].Error != nil || len(response.Hosts[0].Servers) != 1 {
+		t.Fatal("large linked inventory did not meet the three-second host deadline")
+	}
+	found := response.Hosts[0].Servers[0].Agents
+	if len(found) != 1 || len(found[0].Members) != 55 {
+		t.Fatal("large inventory dropped memberships or included empty owned panes")
+	}
+	for _, member := range found[0].Members {
+		if member.WindowName != display(name) {
+			t.Fatalf("synthetic window label: got %q, expected %q", member.WindowName, display(name))
+		}
+	}
+	if strings.Count(inventoryScript(host), "list-panes") != 2 {
+		t.Fatal("inventory no longer uses two batched pane reads per server")
+	}
+	t.Logf("110 pane memberships inventoried in %s", elapsed)
+}
+
+func TestNativeUnicodeProbeInCLocale(t *testing.T) {
+	host, pane := nativeFixture(t)
+	name := "fixture \u754c \U0001f916"
+	text := "synthetic-\u754c-\U0001f916"
+	nativeRun(t, host, "rename-session", "-t", "fixture", name)
+	nativeRun(t, host, "rename-window", "-t", pane, name)
+	nativeRun(t, host, "send-keys", "-t", pane, "-l", text)
+	nativeRun(t, host, "send-keys", "-t", pane, "Enter")
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("LC_CTYPE", "C")
+	t.Setenv("LANG", "C")
+	client := Client{Config: config.Config{Hosts: []config.Host{host}}, Runner: syntheticProcesses}
+	listing, err := client.List(context.Background(), "")
+	if err != nil || listing.Hosts[0].Error != nil || len(listing.Hosts[0].Servers) != 1 ||
+		len(listing.Hosts[0].Servers[0].Agents) != 1 {
+		t.Fatal("Unicode inventory failed in a non-UTF-8 locale")
+	}
+	agent := listing.Hosts[0].Servers[0].Agents[0]
+	if len(agent.Members) != 1 || agent.Members[0].SessionName != name || agent.Members[0].WindowName != name {
+		t.Fatal("Unicode metadata was replaced or incorrectly framed")
+	}
+	if _, _, err := client.Resolve(context.Background(), agent.ID); err != nil {
+		t.Fatal("Unicode target resolution failed in a non-UTF-8 locale")
+	}
+	for range 50 {
+		response, err := client.Capture(context.Background(), []string{agent.ID}, 20)
+		if err != nil || response.Captures[0].Error != nil {
+			t.Fatal("Unicode capture failed in a non-UTF-8 locale")
+		}
+		if strings.Contains(response.Captures[0].Text, text) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Unicode captured output was replaced in a non-UTF-8 locale")
 }

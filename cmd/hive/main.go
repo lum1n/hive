@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"runtime/debug"
@@ -32,32 +33,64 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", config.DefaultPath(), "config file")
-	initCfg := flag.Bool("init", false, "write an example config and exit")
-	dump := flag.Bool("dump", false, "print host snapshots and exit")
-	showVer := flag.Bool("version", false, "print version and exit")
-	flag.Parse()
+	return runArgs(os.Args[1:], os.Stdout, os.Stderr)
+}
+
+func runArgs(args []string, stdout, stderr io.Writer) error {
+	flags := flag.NewFlagSet("hive", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configPath := flags.String("config", config.DefaultPath(), "config file")
+	initCfg := flags.Bool("init", false, "write an example config and exit")
+	dump := flags.Bool("dump", false, "print host snapshots and exit")
+	showVer := flags.Bool("version", false, "print version and exit")
+	var helpErr error
+	flags.Usage = func() {
+		helpErr = agentcli.WriteHelp(stderr, flags, `Usage: hive [flags]
+       hive [--config PATH] agents [flags]
+       hive [--config PATH] agents <command> [flags]
+
+Run hive without arguments to open the interactive tmux session picker.
+Run hive agents to open the interactive agent picker.
+The agents commands also provide headless capabilities, list, capture, and attach.
+Use hive agents --help or hive agents <command> --help for details.
+Help works without configuration, a terminal, or host connections.
+`, `
+Examples:
+  hive
+  hive -init
+  hive -dump
+  hive agents
+  hive agents list --json
+  hive agents --help
+`)
+	}
+	if err := flags.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return helpErr
+		}
+		return err
+	}
 
 	if *showVer {
-		fmt.Println(version())
-		return nil
+		_, err := fmt.Fprintln(stdout, version())
+		return err
 	}
 
 	if *initCfg {
 		if err := config.WriteExample(*configPath); err != nil {
 			return err
 		}
-		fmt.Printf("wrote %s\n", *configPath)
-		return nil
+		_, err := fmt.Fprintf(stdout, "wrote %s\n", *configPath)
+		return err
 	}
 
-	if args := flag.Args(); len(args) > 0 {
+	if args := flags.Args(); len(args) > 0 {
 		if args[0] != "agents" {
 			return fmt.Errorf("unknown command; use hive agents or run hive without arguments")
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return agentcli.Run(ctx, args[1:], *configPath, os.Stdout, os.Stderr)
+		return agentcli.Run(ctx, args[1:], *configPath, stdout, stderr)
 	}
 
 	if _, err := os.Stat(*configPath); err != nil {

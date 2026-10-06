@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,5 +198,43 @@ func TestCmdWrapsRemoteEvenInsideLocalTmux(t *testing.T) {
 	got := Cmd(false, "tmux", "", "list-sessions")
 	if got[0] != "sh" || got[1] != "-c" {
 		t.Fatalf("ssh hosts must wrap despite local $TMUX: %v", got)
+	}
+}
+
+func TestSocketDiscoverySkipsWatcherAndUnnecessarySweep(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	socket, watcher := filepath.Join(dir, "work (literal).sock"), filepath.Join(dir, "default.agent-watcher.sock")
+	for _, path := range []string{socket, watcher} {
+		listener, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { listener.Close() })
+	}
+	helpers := socketPrelude[:strings.Index(socketPrelude, "_live_socket_scan=0")]
+	script := helpers + "\nhive_add_sock " + sshx.SingleQuote(watcher) +
+		"\nhive_add_sock " + sshx.SingleQuote(watcher+" (type=STREAM)") +
+		"\nhive_add_sock " + sshx.SingleQuote(socket) +
+		"\nhive_add_sock " + sshx.SingleQuote(socket+" (type=STREAM)") +
+		"\nprintf %s \"$HIVE_TMUX_SOCKS\"\n"
+	raw, err := exec.Command("sh", "-c", script).Output()
+	if err != nil || string(raw) != socket {
+		t.Fatal("discovery confused a watcher control socket with a tmux socket")
+	}
+	t.Setenv("TMUX", "")
+	script = "lsof() { printf '%s\\n' " + sshx.SingleQuote("n"+socket) + "; }\n" + socketPrelude
+	script = strings.Replace(script, "for _sock in /var/folders",
+		"printf 'UNNECESSARY_DIRECTORY_SWEEP\\n' >&2\nfor _sock in /var/folders", 1)
+	raw, err = exec.Command("sh", "-c", script).CombinedOutput()
+	if err != nil || strings.Contains(string(raw), "UNNECESSARY_DIRECTORY_SWEEP") {
+		t.Fatal("discovery swept companion sockets despite finding live sockets")
 	}
 }

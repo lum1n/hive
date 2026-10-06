@@ -223,8 +223,75 @@ func parseProcesses(records [][]string) (map[int]process, error) {
 	return processes, nil
 }
 
+func expandInventory(records [][]string) ([][]string, error) {
+	result := make([][]string, 0, len(records))
+	panes := 0
+	for _, fields := range records {
+		if fields[0] != "I" {
+			if fields[0] == "N" {
+				panes++
+				if panes > 4096 {
+					return nil, fmt.Errorf("too many pane memberships")
+				}
+			}
+			result = append(result, fields)
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("invalid metadata batch")
+		}
+		text, err := decoded(fields[1], MaxInventoryBytes)
+		if err != nil {
+			return nil, err
+		}
+		for text != "" {
+			panes++
+			if panes > 4096 {
+				return nil, fmt.Errorf("too many pane memberships")
+			}
+			header, rest, ok := strings.Cut(text, "\t")
+			parts := strings.Fields(header)
+			if !ok || len(parts) != 7 {
+				return nil, fmt.Errorf("invalid metadata header")
+			}
+			row := append([]string{"N"}, parts...)
+			for range 5 {
+				colon := strings.IndexByte(rest, ':')
+				if colon < 1 || colon > 5 {
+					return nil, fmt.Errorf("invalid metadata length")
+				}
+				for _, digit := range rest[:colon] {
+					if digit < '0' || digit > '9' {
+						return nil, fmt.Errorf("invalid metadata length")
+					}
+				}
+				size, err := strconv.Atoi(rest[:colon])
+				rest = rest[colon+1:]
+				if err != nil || size > 16384 || len(rest) <= size || rest[size] != ',' {
+					return nil, fmt.Errorf("invalid metadata field")
+				}
+				row = append(row, base64.StdEncoding.EncodeToString([]byte(rest[:size])))
+				rest = rest[size+1:]
+			}
+			if rest != "" {
+				if rest[0] != '\n' {
+					return nil, fmt.Errorf("invalid metadata boundary")
+				}
+				rest = rest[1:]
+			}
+			result = append(result, row)
+			text = rest
+		}
+	}
+	return result, nil
+}
+
 func parseInventory(raw []byte, host string, now time.Time) ([]Server, error) {
 	records, err := protocol(raw)
+	if err != nil {
+		return nil, err
+	}
+	records, err = expandInventory(records)
 	if err != nil {
 		return nil, err
 	}
@@ -274,10 +341,6 @@ func parseInventory(raw []byte, host string, now time.Time) ([]Server, error) {
 				!windowID.MatchString(fields[2]) || !sessionID.MatchString(fields[3]) {
 				return nil, fmt.Errorf("invalid pane identity")
 			}
-			pid, err := strconv.Atoi(fields[4])
-			if err != nil || pid < 1 {
-				return nil, fmt.Errorf("invalid pane process")
-			}
 			for _, flag := range fields[5:8] {
 				if flag != "0" && flag != "1" {
 					return nil, fmt.Errorf("invalid pane flag")
@@ -293,6 +356,10 @@ func parseInventory(raw []byte, host string, now time.Time) ([]Server, error) {
 			override, command, directory, name, title := values[0], values[1], values[2], values[3], values[4]
 			if fields[6] == "1" || fields[7] == "1" || override == "off" {
 				continue
+			}
+			pid, err := strconv.Atoi(fields[4])
+			if err != nil || pid < 1 {
+				return nil, fmt.Errorf("invalid pane process")
 			}
 			kind := override
 			if !knownKind(kind) {
