@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	"github.com/lum1n/hive/internal/config"
 	"github.com/lum1n/hive/internal/discover"
 	"github.com/lum1n/hive/internal/sshx"
+	"github.com/lum1n/hive/internal/version"
 	"golang.org/x/term"
 )
 
@@ -72,7 +72,7 @@ Examples:
 	}
 
 	if *showVer {
-		_, err := fmt.Fprintln(stdout, version())
+		_, err := fmt.Fprintln(stdout, version.Full())
 		return err
 	}
 
@@ -85,6 +85,10 @@ Examples:
 	}
 
 	if args := flags.Args(); len(args) > 0 {
+		if args[0] == "version" {
+			_, err := fmt.Fprintln(stdout, version.Full())
+			return err
+		}
 		if args[0] != "agents" {
 			return fmt.Errorf("unknown command; use hive agents or run hive without arguments")
 		}
@@ -162,26 +166,4 @@ func dumpHosts(cfg config.Config, sshOpt sshx.Options) error {
 		}
 	}
 	return nil
-}
-
-func version() string {
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		v := bi.Main.Version
-		for _, s := range bi.Settings {
-			if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-				v += " " + s.Value[:7]
-			}
-		}
-		if v != "" && v != "(devel)" {
-			return v
-		}
-		if v == "(devel)" {
-			for _, s := range bi.Settings {
-				if s.Key == "vcs.revision" && len(s.Value) >= 7 {
-					return "hive " + s.Value[:7]
-				}
-			}
-		}
-	}
-	return "hive"
 }

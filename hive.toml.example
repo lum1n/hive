@@ -1,4 +1,4 @@
-# Copy to ~/.config/hive/hive.toml (or run `hive init`).
+# Copy to ~/.config/hive/hive.toml (or run `hive -init`).
 # Hosts are opt-in. Hive never scrapes every Host in ~/.ssh/config.
 
 prefix = "ctrl-space"

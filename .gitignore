@@ -1,4 +1,6 @@
 /hive
 /bin/
-dist/
+/dist/
 *.test
+*.out
+/hive_*

@@ -1,41 +1,41 @@
-# Hive
+# hive
 
-One client for tmux sessions across machines. Remote tmux stays a normal
-tmux server. Hive discovers sessions, you pick one, then it runs
-`ssh -t host tmux attach`.
+One picker for tmux sessions across all your machines. Remote tmux stays a
+normal tmux server: hive lists sessions over SSH, you pick one, and it attaches.
+`ctrl-space` brings you back to the picker.
 
 ```
-configured hosts
-    → cached + parallel list-sessions
-    → fuzzy picker
-    → PTY attach
-    → ctrl-space returns to the picker
-    → SSH death reconnects the same workspace
+configured hosts → cached + parallel list-sessions → fuzzy picker → attach
 ```
 
-Design: [`docs/architecture.md`](docs/architecture.md).
+It also finds coding agents (Claude Code, Codex, Copilot CLI, Cursor Agent,
+OpenCode, Pi) running in tmux panes on those hosts, and jumps straight to them.
 
 ## Install
 
 ```sh
-go install github.com/lum1n/hive/cmd/hive@latest
+curl -fsSL https://raw.githubusercontent.com/lum1n/hive/master/install.sh | sh
 ```
 
-Or from this repo:
+Installs to `~/.local/bin/hive` (override with `BINDIR=/usr/local/bin`).
+Linux and macOS, amd64 and arm64.
+
+`go install github.com/lum1n/hive/cmd/hive@latest` also works if you have
+Go 1.26+, but it compiles from source.
+
+From a clone: `make install`.
+
+Needs OpenSSH locally, and tmux on every host you list. Nothing is installed on
+remote hosts.
+
+## Quick start
 
 ```sh
-go build -o hive ./cmd/hive
+hive -init   # writes ~/.config/hive/hive.toml with your local machine
+hive         # open the session picker
 ```
 
-Needs a local terminal, OpenSSH, and tmux on each machine you list.
-
-## Config
-
-```sh
-hive -init
-```
-
-writes `~/.config/hive/hive.toml`:
+Add remote hosts to `~/.config/hive/hive.toml`:
 
 ```toml
 prefix = "ctrl-space"
@@ -44,159 +44,126 @@ prefix = "ctrl-space"
 id = "local"
 label = "local"
 local = true
-tmux = "tmux"
 
 [[hosts]]
 id = "devbox"
-ssh = "devbox"
-tmux = "tmux"
+ssh = "devbox"     # any OpenSSH destination: alias or user@host
 ```
 
-`ssh` is an OpenSSH destination (alias or `user@host`). Hive uses your
-agent, `~/.ssh/config`, ProxyJump, and `known_hosts`. It does not store keys.
+## Usage
 
-The machine you sit on must be `local = true`. Listing the same Mac over
-`ssh = "macbook"` talks to a different tmux socket (GUI `TMPDIR` vs `/tmp`)
-and a PATH that often lacks Homebrew, so Hive used to report the host
-online with no sessions.
+```sh
+hive                    # session picker
+hive agents             # agent picker
+hive agents --host box  # agents on one host
+hive -dump              # print host status and sessions, no TUI
+hive version
+hive --help
+```
 
-Over SSH, Hive finds `tmux` wherever it was installed — Homebrew (Apple
-Silicon, Intel, Linuxbrew, keg-only, Cellar), MacPorts, Fink, pkgsrc,
-Nix, Guix, Snap, asdf/mise, conda — prefers the binary of a live server,
-then locates sockets under `/tmp`, `/private/tmp`, and the macOS GUI temp
-dir. Set `tmux = "/explicit/path/tmux"` only to pin a specific binary.
+### Session picker
 
-Password hosts: open a master first and set `control_path`.
+| Key | Action |
+|---|---|
+| type | filter (`devbox/back` or `backend`) |
+| arrows / `ctrl-j` `ctrl-k` | move |
+| `enter` | attach, or create if nothing matches |
+| `ctrl-n` | new session on the selected host |
+| `ctrl-r` | rename |
+| `ctrl-x` | kill (confirm with `y`) |
+| `esc` | clear filter, then quit |
+| `ctrl-c` | quit |
+
+### Agent picker
+
+Rows show host/session, window, agent kind, state, and project path. Hosts
+fill in as they answer, so one slow host never blocks the rest.
+
+| Key | Action |
+|---|---|
+| type | filter by host, session, window, kind, pane, or path |
+| arrows / `ctrl-j` `ctrl-k` / `pgup` `pgdn` | move |
+| `enter` | attach to the exact agent pane |
+| `ctrl-r` | refresh |
+| `esc` | clear filter, then quit |
+| `ctrl-c` | quit |
+
+### While attached
+
+| Where | Behavior |
+|---|---|
+| plain terminal | `ctrl-space` detaches hive and returns to the picker; remote tmux keeps running |
+| inside tmux, local session | hive runs `switch-client` instead of nesting tmux; switch back with your usual tmux keys |
+| inside tmux, remote session | the outer prefix and status bar are suppressed so the remote tmux is in control |
+
+If SSH drops, hive reconnects to the same workspace.
+
+## Configuration
+
+`~/.config/hive/hive.toml`, or `$XDG_CONFIG_HOME/hive/hive.toml`. Override
+with `-config PATH` or `HIVE_CONFIG`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `prefix` | `ctrl-space` | detach key |
+| `agent_watcher` | `auto` | read agent states from a running watcher; `off` disables |
+| `control_persist` | `120` | seconds an idle SSH master stays open |
+
+Per `[[hosts]]`:
+
+| Key | Meaning |
+|---|---|
+| `id` | short name used in the picker and on the CLI |
+| `label` | display name (defaults to `id`) |
+| `local` | `true` for the machine you sit on — never SSH to yourself |
+| `ssh` | OpenSSH destination (defaults to `id`) |
+| `tmux` | tmux binary; only pin a path if a host has two installs |
+| `socket` | specific tmux socket |
+| `control_path` | existing SSH master socket (for password hosts) |
+
+hive uses your SSH agent, `~/.ssh/config`, ProxyJump, and `known_hosts`. It
+never stores keys. Hosts are opt-in; hive does not scan `~/.ssh/config`.
+
+Over SSH, hive finds tmux wherever it was installed (Homebrew, MacPorts, Nix,
+asdf/mise, conda, …) and locates sockets under `/tmp` and the macOS GUI temp
+dir.
+
+For hosts that need a password, open a master first and point `control_path`
+at it:
 
 ```sh
 ssh -M -S ~/.ssh/hive-laptop.sock -o ControlPersist=30m -fnN user@laptop
 ```
 
-Override the file with `-config` or `HIVE_CONFIG`.
+## Agents API
 
-`hive -dump` prints each host’s status and sessions without the TUI.
-`hive -version` prints the build.
-
-Use `hive --help`, `hive agents --help`, or
-`hive agents <command> --help` for usage, flags, and examples.
-`-h` also works. Help never requires configuration, a terminal, or a host
-connection.
-
-## Agents
-
-`hive agents` opens an agent picker with the same appearance and fuzzy
-filtering as the session picker. Rows show the host/session, agent kind/state,
-window/pane, and project path. Agents arrive as each host responds; an
-unavailable host does not delay other hosts or appear as a healthy empty list.
+Everything in the agent picker is also available headless, as JSON:
 
 ```sh
-hive agents
-hive agents --host devbox
-hive agents list
-```
-
-Type to filter by host, session, window, agent kind, pane, or path. Use arrows
-or ctrl-j/k to move, enter to attach to the exact agent pane, ctrl-r to refresh,
-esc to clear the filter or exit, and ctrl-c to quit. The configured detach key
-(ctrl-space by default) returns to the picker after a PTY attachment. Same-server
-local attachment inside tmux switches the existing client; return with your
-normal tmux navigation. Agent mode does not create, rename, or kill sessions.
-Inventory and selection remain memory-only; it does not capture pane previews.
-
-### Headless agent API
-
-Hive can discover Copilot CLI, Claude Code, Codex, Pi, OpenCode, and Cursor
-Agent panes on configured hosts without opening the picker:
-
-```sh
-hive agents capabilities --json
-hive agents --json
 hive agents list --json
-hive agents list --host devbox --json
-hive agents capture --id '<id from listing>' --lines 200 --json
-hive agents attach --id '<id from listing>'
+hive agents capture --id '<id>' --lines 200 --json
+hive agents attach --id '<id>'
+hive agents capabilities --json
 ```
 
-Repeat `--id` to capture up to 16 agents in one batch. Requests are grouped by
-host and reuse SSH connections. Each reference identifies a host, canonical
-tmux socket, server generation, and pane; renames do not invalidate it, but
-server restarts do. Attachment selects the exact pane. Inside the same local
-tmux server, it switches the initiating client instead of nesting tmux; use
-`--client` when multiple clients make the origin ambiguous.
-
-Remote hosts need only their existing SSH, tmux, and standard OS tools.
-Neither Hive nor Python is required remotely for discovery, capture, or attach.
-The optional watcher bridge uses an existing remote `python3` when available.
-Detection supports
-interpreter wrappers and process descendants. An explicit pane override can
-mark a wrapper or exclude a pane:
+Mark a wrapper process as an agent, or hide a pane:
 
 ```sh
 tmux set-option -p -t %12 @agent-overview-kind copilot
 tmux set-option -p -t %13 @agent-overview-kind off
 ```
 
-Agent listing is metadata-only. When an existing same-user agent-watcher socket
-is available, listing and capture can use its states (`provenance: "shared"`).
-Hive checks tmux-agent-state's `@agent_watcher_socket`, or the server's default
-`<tmux socket>.agent-watcher.sock` companion. It never installs, launches,
-reconfigures, or stops a watcher. Without a watcher, listing reports `unknown`
-and captures retain conservative text-based states. No missing optional runtime
-or failed watcher prevents ordinary discovery/capture/attachment.
+Schemas, limits, exit codes, and the optional watcher bridge are in
+[docs/agents.md](docs/agents.md).
 
-The bridge deliberately uses only active, single-pane windows with a matching
-agent kind and process identity. Split windows, unbound records, conflicting
-linked memberships, and unmatched labels fall back rather than attributing
-somebody else's state. Snapshot reads are bounded to 0.8 seconds per socket and
-1.2 seconds per host batch, within the existing per-host operation deadline.
-Optional lookup errors appear separately as `state_error`; successful previews
-remain successful.
-
-Disable watcher integration globally in `hive.toml`, before any `[[hosts]]`:
-
-```toml
-agent_watcher = "off" # auto (default) or off
-```
-
-Or use `hive agents --no-watcher --json` and
-`hive agents capture --no-watcher --id '<reference>' --json`.
-These commands do not use the picker cache or write previews to disk.
-`capabilities` does not read configuration or contact hosts. Other commands
-contact only configured hosts; `--host` narrows listing.
-Pane metadata is read in batches per server, including linked memberships,
-rather than starting multiple tmux processes for every pane.
-Socket discovery excludes tmux-agent-state's `*.agent-watcher.sock` companion
-sockets; they are not tmux servers and cannot answer tmux queries.
-
-JSON commands exit 0 on success, 2 for partial/operational failures with a
-complete JSON response, and 1 for invalid requests/configuration. Diagnostics
-are on stderr. Flags such as `--config` and `--timeout` can follow the agent
-subcommand; existing global flags still work before `agents`.
-
-See [the version-1 agent contract](docs/agents.md) for schemas, bounds,
-failure codes, and integration guidance. The default session picker and
-`hive -dump` remain unchanged.
-
-## Keys
-
-| Where | Key | Action |
-|---|---|---|
-| picker | type | filter (`devbox/back` or `backend`) |
-| picker | arrows / ctrl-j/k | move |
-| picker | enter | attach, or create if nothing matches |
-| picker | ctrl-n | new session on the highlighted host |
-| picker | ctrl-x | kill (confirm y) |
-| picker | ctrl-r | rename |
-| picker | ctrl-c | quit |
-| attached (not inside tmux) | ctrl-space | detach Hive, leave remote tmux running |
-| attached (inside tmux, local session) | — | Hive runs `switch-client` (no nested tmux). Switch back to the Hive pane with your usual tmux session switcher. |
-| attached (inside tmux, remote session) | ctrl-space | outer prefix/status are suppressed so the remote tmux is in control |
-
-Remote tmux keeps its own prefix. Do not `tmux attach` from inside another tmux client — Hive avoids that nest for local sessions.
-
-## How listing stays fast
+## How it stays fast
 
 The picker paints the last snapshot from `~/.local/state/hive/` immediately,
-then refreshes hosts in parallel with `ssh -T … tmux list-sessions`. Listing
-reuses a ControlMaster; attach opens a fresh SSH TTY because a no-TTY mux
-cannot allocate a PTY for tmux.
+then refreshes every host in parallel over a shared SSH ControlMaster. Attach
+opens its own SSH TTY.
+
+Design notes: [docs/architecture.md](docs/architecture.md).
+
+## License
+
+MIT
