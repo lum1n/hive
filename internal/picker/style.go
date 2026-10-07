@@ -16,6 +16,8 @@ var (
 	offlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 	authStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
 	busyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	// markerStyle is honey amber, outside the host palette so it never blends in.
+	markerStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
 )
 
 // hostPalette skips red and green so host names never read as a status badge.
@@ -52,7 +54,7 @@ func leftWidth(width int) int {
 func renderRow(selected bool, width int, cols ...col) string {
 	marker := "  "
 	if selected {
-		marker = titleStyle.Render("▸") + " "
+		marker = markerStyle.Render("❯") + " "
 	}
 	var b strings.Builder
 	b.WriteString(marker)
