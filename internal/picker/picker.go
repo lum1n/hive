@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/lum1n/hive/internal/cache"
 	"github.com/lum1n/hive/internal/config"
 	"github.com/lum1n/hive/internal/discover"
@@ -466,15 +465,13 @@ func (m model) View() string {
 	if width <= 0 {
 		width = 80
 	}
-	title := titleStyle.Render("hive")
-	count := fmt.Sprintf("%d", len(m.rows()))
-	meta := mutedStyle.Render(count + "  " + m.refreshLabel())
-	head := lipgloss.JoinHorizontal(lipgloss.Top, title, "  ", meta)
-
-	filterLine := mutedStyle.Render("  filter> ") + m.filter + cursorGlyph(m.mode == modeList)
+	rows := m.rows()
+	meta := fmt.Sprintf("%d sessions", len(rows))
+	if label := m.refreshLabel(); label != "" {
+		meta += "  " + label
+	}
 
 	var body strings.Builder
-	rows := m.rows()
 	listHeight := max(1, m.height-6)
 	start := 0
 	if m.cursor >= listHeight {
@@ -496,8 +493,7 @@ func (m model) View() string {
 	}
 	help := mutedStyle.Render("  enter attach   ctrl-n new   ctrl-x kill   ctrl-r rename   " + prefix.Label(m.opts.Config.Prefix) + " detaches   ctrl-c quit")
 
-	parts := []string{head, filterLine, "", body.String(), status, help}
-	return strings.Join(parts, "\n")
+	return frame(width, header("hive", meta), filterLine(m.filter, m.mode == modeList), "", body.String(), status, help)
 }
 
 func (m model) refreshLabel() string {
@@ -508,76 +504,41 @@ func (m model) refreshLabel() string {
 }
 
 func (m model) renderRow(r row, selected bool, width int) string {
-	marker := "  "
-	if selected {
-		marker = "▸ "
-	}
-	left := r.host.Display() + "/"
+	host := seg{r.host.Display(), hostStyle(m.opts.Config.Hosts, r.host.ID)}
 	if r.empty {
 		hint := "(no sessions)"
 		if err := m.snaps[r.host.ID].Error; err != "" {
 			hint = "(" + err + ")"
 		}
-		left += mutedStyle.Render(hint)
-	} else {
-		left += r.session.Name
+		return renderRow(selected, width,
+			col{leftWidth(width), []seg{host, {"/", mutedStyle}, {hint, mutedStyle}}},
+			col{20, nil},
+			col{0, []seg{statusBadge(m.snaps[r.host.ID].Status)}})
 	}
-	detail := ""
-	if !r.empty {
-		w := fmt.Sprintf("%d window", r.session.Windows)
-		if r.session.Windows != 1 {
-			w += "s"
-		}
-		if r.session.Attached {
-			w += "  attached"
-		}
-		detail = w
+	windows := fmt.Sprintf("%d window", r.session.Windows)
+	if r.session.Windows != 1 {
+		windows += "s"
 	}
-	st := m.snaps[r.host.ID].Status
-	badge := statusBadge(st)
-	line := fmt.Sprintf("%s%-28s  %-18s  %s", marker, truncate(left, 28), truncate(detail, 18), badge)
-	if selected {
-		return selectedStyle.Render(truncate(line, width))
+	attached := seg{}
+	if r.session.Attached {
+		attached = seg{"attached", plainStyle}
 	}
-	return truncate(line, width)
+	return renderRow(selected, width,
+		col{leftWidth(width), []seg{host, {"/", mutedStyle}, {r.session.Name, plainStyle}}},
+		col{10, []seg{{windows, mutedStyle}}},
+		col{8, []seg{attached}},
+		col{0, []seg{statusBadge(m.snaps[r.host.ID].Status)}})
 }
 
-func statusBadge(st cache.Status) string {
+func statusBadge(st cache.Status) seg {
 	switch st {
 	case cache.StatusOnline:
-		return onlineStyle.Render("online")
+		return seg{"online", onlineStyle}
 	case cache.StatusAuth:
-		return authStyle.Render("auth")
+		return seg{"auth", authStyle}
 	case cache.StatusOffline:
-		return offlineStyle.Render("offline")
+		return seg{"offline", offlineStyle}
 	default:
-		return mutedStyle.Render("…")
+		return seg{"…", mutedStyle}
 	}
 }
-
-func cursorGlyph(show bool) string {
-	if show {
-		return "█"
-	}
-	return ""
-}
-
-func truncate(s string, width int) string {
-	if width <= 1 || lipgloss.Width(s) <= width {
-		return s
-	}
-	runes := []rune(s)
-	for lipgloss.Width(string(runes)) > width-1 && len(runes) > 0 {
-		runes = runes[:len(runes)-1]
-	}
-	return string(runes) + "…"
-}
-
-var (
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	selectedStyle = lipgloss.NewStyle().Reverse(true)
-	mutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	onlineStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	offlineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	authStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-)

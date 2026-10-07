@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/lum1n/hive/internal/agents"
 	"github.com/lum1n/hive/internal/prefix"
@@ -289,13 +288,11 @@ func (m agentModel) View() string {
 	if m.busy {
 		meta += fmt.Sprintf("  refresh %d/%d", m.refreshD, len(m.opts.Client.Config.Hosts))
 	}
-	head := lipgloss.JoinHorizontal(lipgloss.Top, titleStyle.Render("hive agents"), "  ", mutedStyle.Render(meta))
-	filter := mutedStyle.Render("  filter> ") + m.filter + cursorGlyph(true)
 	var body strings.Builder
 	height := max(1, m.height-7)
 	start := max(0, m.cursor-height+1)
 	for i := start; i < min(len(rows), start+height); i++ {
-		body.WriteString(renderAgentRow(rows[i], i == m.cursor, width))
+		body.WriteString(m.renderRow(rows[i], i == m.cursor, width))
 		body.WriteByte('\n')
 	}
 	if len(rows) == 0 {
@@ -303,42 +300,43 @@ func (m agentModel) View() string {
 	}
 	help := mutedStyle.Render("  enter attach   ctrl-r refresh   " +
 		prefix.Label(m.opts.Client.Config.Prefix) + " detaches   esc back   ctrl-c quit")
-	parts := []string{head, filter, "", body.String(), agentText(m.status), help}
-	for i := range parts {
-		var lines []string
-		for _, line := range strings.Split(parts[i], "\n") {
-			lines = append(lines, ansi.Truncate(line, width, "…"))
-		}
-		parts[i] = strings.Join(lines, "\n")
-	}
-	return strings.Join(parts, "\n")
+	return frame(width, header("hive agents", meta), filterLine(m.filter, true), "", body.String(), agentText(m.status), help)
 }
 
-func renderAgentRow(row agentRow, selected bool, width int) string {
-	marker := "  "
-	if selected {
-		marker = "▸ "
+func (m agentModel) renderRow(row agentRow, selected bool, width int) string {
+	host := seg{agentText(row.host.Label), hostStyle(m.opts.Client.Config.Hosts, row.host.Host)}
+	slash := seg{"/", mutedStyle}
+	if row.agent.ID == "" {
+		return renderRow(selected, width, col{0, []seg{host, slash, {"(" + agentText(row.hint) + ")", mutedStyle}}})
 	}
-	left := agentText(row.host.Label) + "/"
-	detail := "(" + agentText(row.hint) + ")"
-	if row.agent.ID != "" {
-		if len(row.agent.Members) > 0 {
-			left += agentText(row.agent.Members[0].SessionName)
-			detail = agentText(row.agent.Members[0].WindowName) + " "
-		} else {
-			left += row.agent.Session
-			detail = row.agent.Window + " "
-		}
-		detail = agentText(row.agent.Kind) + "  " + agentText(row.agent.State) + "  " + detail + agentText(row.agent.Pane) + "  " + agentText(row.agent.Path)
-		if row.agent.StateError != nil {
-			detail += "  watcher unavailable"
-		}
+	session, window := row.agent.Session, row.agent.Window
+	if len(row.agent.Members) > 0 {
+		session, window = row.agent.Members[0].SessionName, row.agent.Members[0].WindowName
 	}
-	leftWidth := min(28, max(8, width/3))
-	left = lipgloss.NewStyle().Width(leftWidth).Render(ansi.Truncate(left, leftWidth, "…"))
-	line := ansi.Truncate(marker+left+"  "+detail, width, "…")
-	if selected {
-		return selectedStyle.Render(line)
+	return renderRow(selected, width,
+		col{leftWidth(width), []seg{host, slash, {agentText(session), plainStyle}}},
+		col{14, []seg{{agentText(window), mutedStyle}}},
+		col{8, []seg{{agentText(row.agent.Kind), plainStyle}}},
+		col{10, []seg{stateBadge(row.agent)}},
+		col{0, []seg{{agentText(row.agent.Path), mutedStyle}}})
+}
+
+func stateBadge(agent agents.Agent) seg {
+	if agent.StateError != nil {
+		return seg{"no watcher", mutedStyle}
 	}
-	return line
+	switch agent.State {
+	case "idle":
+		return seg{"idle", onlineStyle}
+	case "thinking":
+		return seg{"thinking", busyStyle}
+	case "running-tool":
+		return seg{"tool", busyStyle}
+	case "waiting-permission":
+		return seg{"permission", authStyle}
+	case "errored":
+		return seg{"error", offlineStyle}
+	default:
+		return seg{"…", mutedStyle}
+	}
 }
