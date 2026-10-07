@@ -44,7 +44,13 @@ The list envelope contains `version: 1`, UTC `time`, and `hosts`.
 Each host contains its configured `host` ID, display `label`, `local` flag,
 `status`, optional `error`, and `servers`. Host status is `online`, `degraded`,
 `offline`, `auth`, or `unavailable`. Servers contain `socket`, `generation`,
-`status`, optional `error`, and `agents`.
+`status`, optional `error`, `agents`, and optional `quota`.
+
+`quota` lists the server watcher's latest subscription usage per agent kind:
+`kind`, optional `plan`, `stale`, and `windows` of `label`, `used_percent`
+(0-100), and optional RFC 3339 `resets_at`. It is present only when the
+watcher bridge is enabled and the watcher published readings; it describes the
+accounts on that host. Malformed readings are dropped without affecting states.
 
 An agent contains:
 
@@ -120,8 +126,10 @@ resolution does not request watcher states.
 
 Socket ownership, private permissions, and safe parent directories are verified; symlinks and foreign or
 unsafe sockets are rejected. Linux peer credentials are also checked. Only
-version-1 `hello`/`snapshot` frames are accepted, with a 1 MiB byte limit,
-32 events, and 4096 records. Raw watcher payloads remain in memory and are not
+version-1 frames are accepted, with a 1 MiB byte limit, 32 events, and 4096
+records. The probe reads up to its requested `snapshot`, keeps `quota`
+readings sent before it, and skips other frames such as `hello`, live state
+updates, and newer event types. Raw watcher payloads remain in memory and are not
 exported or logged; only validated state/kind/identity matches are returned.
 
 Watchers currently identify a session name and window index, not a pane. Hive

@@ -124,6 +124,8 @@ type Server struct {
 	Status     string   `json:"status"`
 	Error      *Failure `json:"error,omitempty"`
 	Agents     []Agent  `json:"agents"`
+	// Quota is the server watcher's subscription usage, when it publishes any.
+	Quota []Quota `json:"quota,omitempty"`
 }
 
 type HostResult struct {

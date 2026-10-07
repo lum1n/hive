@@ -110,7 +110,57 @@ type watcherState struct {
 type watcherSnapshot struct {
 	Status string         `json:"status"`
 	States []watcherState `json:"states"`
+	Quota  []Quota        `json:"quota"`
 	Error  string         `json:"error"`
+}
+
+// Quota is a server watcher's last subscription usage reading for one kind.
+type Quota struct {
+	Kind    string        `json:"kind"`
+	Plan    string        `json:"plan,omitempty"`
+	Stale   bool          `json:"stale"`
+	Windows []QuotaWindow `json:"windows"`
+}
+
+type QuotaWindow struct {
+	Label       string  `json:"label"`
+	UsedPercent float64 `json:"used_percent"`
+	ResetsAt    string  `json:"resets_at,omitempty"`
+}
+
+// usableQuota keeps well-formed readings with sanitized text. Quota is
+// optional, so a bad reading is dropped rather than failing watcher states.
+func usableQuota(quota []Quota) []Quota {
+	var result []Quota
+	seen := map[string]bool{}
+	for _, q := range quota {
+		if len(result) == len(Kinds) {
+			break
+		}
+		plan := display(q.Plan)
+		if !knownKind(q.Kind) || seen[q.Kind] || len(plan) > 64 || len(q.Windows) == 0 || len(q.Windows) > 8 {
+			continue
+		}
+		windows := make([]QuotaWindow, 0, len(q.Windows))
+		for _, w := range q.Windows {
+			label := display(w.Label)
+			if label == "" || len(label) > 32 || w.UsedPercent < 0 || w.UsedPercent > 100 {
+				windows = nil
+				break
+			}
+			if _, err := time.Parse(time.RFC3339, w.ResetsAt); w.ResetsAt != "" && err != nil {
+				windows = nil
+				break
+			}
+			windows = append(windows, QuotaWindow{Label: label, UsedPercent: w.UsedPercent, ResetsAt: w.ResetsAt})
+		}
+		if windows == nil {
+			continue
+		}
+		seen[q.Kind] = true
+		result = append(result, Quota{Kind: q.Kind, Plan: plan, Stale: q.Stale, Windows: windows})
+	}
+	return result
 }
 
 func watcherScript() string {
@@ -145,6 +195,9 @@ func parseWatcher(fields []string) (watcherSnapshot, error) {
 	if err != nil || json.Unmarshal([]byte(raw), &snapshot) != nil || len(snapshot.States) > 4096 {
 		return snapshot, fmt.Errorf("invalid watcher snapshot")
 	}
+	if snapshot.Status != "ready" {
+		snapshot.Quota = nil
+	}
 	if snapshot.Status == "absent" && len(snapshot.States) == 0 && snapshot.Error == "" {
 		return snapshot, nil
 	}
@@ -157,6 +210,7 @@ func parseWatcher(fields []string) (watcherSnapshot, error) {
 	if snapshot.Status != "ready" || snapshot.Error != "" {
 		return snapshot, fmt.Errorf("invalid watcher status")
 	}
+	snapshot.Quota = usableQuota(snapshot.Quota)
 	seen := map[string]bool{}
 	for _, state := range snapshot.States {
 		if !paneID.MatchString(state.Pane) || !windowID.MatchString(state.Window) ||

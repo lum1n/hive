@@ -132,6 +132,42 @@ func TestNativeOptionalWatcherStatesAndDisable(t *testing.T) {
 	}
 }
 
+func TestNativeWatcherSkipsFramesAndReportsQuota(t *testing.T) {
+	host, _ := nativeFixture(t)
+	frames := []string{
+		`{"v":1,"type":"hello","role":"agent-watcher","via":"socket"}`,
+		`{"v":1,"type":"quota","kind":"claude","plan":"Max 5x","stale":false,"windows":[` +
+			`{"id":"session","label":"5h","usedPercent":33,"resetsAt":"2026-10-07T12:00:00Z"},` +
+			`{"id":"week","label":"7d","usedPercent":13.5}]}`,
+		`{"v":1,"type":"quota","kind":"codex","windows":[{"label":"5h","usedPercent":"bad"}]}`,
+		`{"v":1,"type":"state","session":"other","window":3,"kind":"claude","state":"thinking"}`,
+		`{"v":1,"type":"future-event"}`,
+		watcherPayload("copilot", "idle", false),
+	}
+	path := syntheticWatcher(t, host, strings.Join(frames, "\n"), "")
+	nativeRun(t, host, "set-option", "-g", "@agent_watcher_socket", path)
+	client := Client{Config: config.Config{Hosts: []config.Host{host}}, Runner: syntheticProcesses}
+	listing, err := client.List(context.Background(), "")
+	if err != nil || len(listing.Hosts[0].Servers) != 1 || len(listing.Hosts[0].Servers[0].Agents) != 1 {
+		t.Fatal("synthetic watcher inventory failed")
+	}
+	server := listing.Hosts[0].Servers[0]
+	if agent := server.Agents[0]; agent.State != "idle" || agent.Provenance != "shared" || agent.StateError != nil {
+		t.Fatalf("frames before the snapshot broke watcher state: %s/%s %v", agent.State, agent.Provenance, agent.StateError)
+	}
+	want := []Quota{{Kind: "claude", Plan: "Max 5x", Windows: []QuotaWindow{
+		{Label: "5h", UsedPercent: 33, ResetsAt: "2026-10-07T12:00:00Z"}, {Label: "7d", UsedPercent: 13.5}}}}
+	got, _ := json.Marshal(server.Quota)
+	expected, _ := json.Marshal(want)
+	if string(got) != string(expected) {
+		t.Fatalf("server quota = %s, want %s", got, expected)
+	}
+	client.Config.AgentWatcher = "off"
+	if listing, _ := client.List(context.Background(), ""); listing.Hosts[0].Servers[0].Quota != nil {
+		t.Fatal("disabled watcher still reported quota")
+	}
+}
+
 func TestNativeOptionalWatcherUnavailableFallback(t *testing.T) {
 	for _, fixture := range []struct{ mode, payload, code string }{
 		{"", `{"v":2,"type":"snapshot","agents":[]}`, "protocol"},

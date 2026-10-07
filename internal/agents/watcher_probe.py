@@ -73,7 +73,7 @@ def snapshot(path, deadline):
             if struct.unpack("3i", credentials)[1] != os.getuid():
                 raise ProbeError("unavailable")
         connection.sendall(b'{"cmd":"snapshot"}\n')
-        buffer, total, events = b"", 0, 0
+        buffer, total, events, quotas = b"", 0, 0, {}
         while events < 32:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -95,10 +95,36 @@ def snapshot(path, deadline):
                 if not isinstance(event, dict) or type(event.get("v")) is not int or event["v"] != 1:
                     raise ProbeError("protocol")
                 if event.get("type") == "snapshot":
-                    return event.get("agents")
-                if event.get("type") != "hello":
-                    raise ProbeError("protocol")
+                    return event.get("agents"), list(quotas.values())
+                if event.get("type") == "quota":
+                    reading = quota(event)
+                    if reading:
+                        quotas[reading["kind"]] = reading
+                # hello, live state/gone frames, and newer event types precede
+                # our snapshot on the shared stream; they are not failures.
         raise ProbeError("output_limit")
+
+
+def quota(event):
+    """Normalized subscription usage, or None. Optional: never fails the probe."""
+    kind, plan, windows = event.get("kind"), event.get("plan", ""), event.get("windows")
+    if (kind not in KINDS or not isinstance(plan, str) or len(plan) > 64 or
+            not isinstance(windows, list) or not 0 < len(windows) <= 8):
+        return None
+    result = []
+    for window in windows:
+        if not isinstance(window, dict):
+            return None
+        label, used, resets = window.get("label"), window.get("usedPercent"), window.get("resetsAt")
+        if (not isinstance(label, str) or not 0 < len(label) <= 32 or
+                type(used) not in (int, float) or not 0 <= used <= 100 or
+                not (resets is None or (isinstance(resets, str) and len(resets) <= 64))):
+            return None
+        row = {"label": label, "used_percent": used}
+        if resets:
+            row["resets_at"] = resets
+        result.append(row)
+    return {"kind": kind, "plan": plan, "stale": event.get("stale") is True, "windows": result}
 
 
 def records(rows):
@@ -155,7 +181,8 @@ def probe(path, binary, server, generation):
     command = [binary, "-u", "-S", server]
     if tmux_output(command + ["display-message", "-p", "#{pid}:#{start_time}"], deadline).decode("ascii") != generation:
         raise ProbeError("stale")
-    rows = records(snapshot(path, deadline))
+    rows, quotas = snapshot(path, deadline)
+    rows = records(rows)
     fmt = ("#{pane_id} #{window_id} #{window_index} #{pane_active} #{pane_pid} "
            "#{?#{@agent-overview-owned},1,0}\t#{n:session_name}:#{session_name},")
     metadata = panes(tmux_output(command + ["list-panes", "-a", "-F", fmt], deadline))
@@ -173,7 +200,8 @@ def probe(path, binary, server, generation):
         matches[pane] = match
     if tmux_output(command + ["display-message", "-p", "#{pid}:#{start_time}"], deadline).decode("ascii") != generation:
         raise ProbeError("stale")
-    return {"status": "ready", "states": [row for pane, row in matches.items() if pane not in conflicts]}
+    return {"status": "ready", "states": [row for pane, row in matches.items() if pane not in conflicts],
+            "quota": quotas}
 
 
 def main():

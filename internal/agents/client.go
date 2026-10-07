@@ -136,6 +136,7 @@ func (c Client) List(ctx context.Context, hostID string) (ListResponse, error) {
 			watchers := c.watchers(ctx, host, refs)
 			for i := range servers {
 				watcher := watchers[servers[i].Socket]
+				servers[i].Quota = watcher.Quota
 				for j := range servers[i].Agents {
 					agent := &servers[i].Agents[j]
 					agent.StateError = watcher.failure()
