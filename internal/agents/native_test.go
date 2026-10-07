@@ -281,7 +281,12 @@ func TestNativeLargeLinkedInventoryAndMetadata(t *testing.T) {
 	owned := nativeRun(t, host, "split-window", "-d", "-I", "-P", "-F", "#{pane_id}")
 	nativeRun(t, host, "set-option", "-p", "-t", owned, "@agent-overview-owned", "1")
 	name := "fixture \u754c,\tnew\nline: $(not-a-command)"
-	nativeRun(t, host, "rename-window", "-t", pane, name)
+	// tmux 3.7+ rejects control characters in window names; older servers
+	// accept them, and those still exercise label sanitizing.
+	rename := exec.Command(host.Tmux, "-S", host.Socket, "rename-window", "-t", pane, name)
+	if rename.Run() != nil {
+		nativeRun(t, host, "rename-window", "-t", pane, "fixture 界, line: $(not-a-command)")
+	}
 	name = nativeRun(t, host, "display-message", "-p", "-t", pane, "#{window_name}")
 	client := Client{Config: config.Config{Hosts: []config.Host{host}},
 		Runner: syntheticProcesses, Timeout: 3 * time.Second}
