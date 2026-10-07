@@ -47,7 +47,7 @@ func TestHostResultsAndConcurrency(t *testing.T) {
 
 func TestCaptureBatchesAndValidation(t *testing.T) {
 	var calls atomic.Int32
-	client := Client{Config: config.Config{Hosts: []config.Host{{ID: "devbox", SSH: "devbox"}}},
+	client := Client{Config: config.Config{AgentWatcher: "off", Hosts: []config.Host{{ID: "devbox", SSH: "devbox"}}},
 		Runner: func(ctx context.Context, name string, args ...string) execx.Result {
 			calls.Add(1)
 			return execx.Result{Stdout: []byte("V\t1\nP\t" + b64("1 0 copilot") +

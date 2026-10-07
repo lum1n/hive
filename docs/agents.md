@@ -33,7 +33,8 @@ show usage and examples without loading configuration, opening a terminal UI,
 or contacting hosts. `-h` is an alias; `hive agents --help` shows group help.
 
 The capabilities response includes `version`, `commands`, `kinds`,
-`max_targets`, `max_lines`, and `max_bytes`. Consumers must reject unsupported
+`max_targets`, `max_lines`, `max_bytes`, and `state_sources` (`heuristic`, `shared`).
+Consumers must reject unsupported
 major versions. Additional response fields may be added within version 1.
 Do not parse human diagnostics, `hive -dump`, or Hive's private cache files.
 
@@ -55,7 +56,8 @@ An agent contains:
 | `memberships` | All linked session/window memberships, with IDs and display names |
 | `kind` | `copilot`, `claude`, `codex`, `pi`, `opencode`, or `cursor` |
 | `path` | Sanitized project/directory display metadata |
-| `state`, `provenance` | Initially `unknown`, `unavailable` |
+| `state`, `provenance` | Existing watcher state with `shared` provenance, otherwise `unknown`/`unavailable` |
+| `state_error` | Optional content-free watcher lookup error; not an inventory failure |
 | `observed_at` | UTC metadata observation time |
 
 Host/server collections and agent collections are arrays, including when
@@ -83,7 +85,7 @@ its identity; removal or server restart requires rediscovery.
 
 The capture envelope contains `version: 1` and `captures`, in request order.
 Each result contains `id`, UTC `time`, `state`, `provenance`, `truncated`,
-optional `text`, and optional `error`. Failed captures have no preview text
+optional `text`, optional `error`, and optional `state_error`. Failed captures have no preview text
 and remain `unknown`/`unavailable`. Returned IDs match the requested opaque
 references, including on failure.
 
@@ -100,10 +102,41 @@ clipping. Excessive source dimensions (over 4096 columns or 512 rows) are
 rejected rather than allowing unbounded remote shell buffering.
 
 States are `unknown`, `idle`, `thinking`, `running-tool`,
-`waiting-permission`, or `errored`. Successful captures use `heuristic`
-provenance. Inconclusive output remains `unknown`; listing does not capture
-every pane or infer that agents are idle. This version does not bridge remote
-agent-watcher Unix sockets.
+`waiting-permission`, or `errored`. Successful captures use `shared` provenance
+when safely matched to an existing watcher, otherwise `heuristic`.
+Inconclusive output remains `unknown`; listing never captures panes or infers
+idle from missing evidence.
+
+### Optional watcher bridge
+
+Default `agent_watcher = "auto"` discovers `@agent_watcher_socket` on each tmux
+server, falling back to `<server socket>.agent-watcher.sock` when not configured.
+It uses the existing Python 3 runtime on that host for a short-lived, read-only
+Unix-socket snapshot request through the same SSH transport. Neither Hive nor
+a new daemon is installed remotely. No watcher/Python installation is required
+for normal Hive operation. Set `agent_watcher = "off"` in the global TOML section,
+or pass `--no-watcher` to list/capture, to skip lookups entirely. Attachment
+resolution does not request watcher states.
+
+Socket ownership, private permissions, and safe parent directories are verified; symlinks and foreign or
+unsafe sockets are rejected. Linux peer credentials are also checked. Only
+version-1 `hello`/`snapshot` frames are accepted, with a 1 MiB byte limit,
+32 events, and 4096 records. Raw watcher payloads remain in memory and are not
+exported or logged; only validated state/kind/identity matches are returned.
+
+Watchers currently identify a session name and window index, not a pane. Hive
+therefore applies a record only to an active, single-pane window whose current
+kind, pane PID, and window identity match its inventory/capture. Linked windows
+are deduplicated by pane; conflicting linked states are not applied. Split
+windows, unbound records, and absent/nonmatching records retain the normal
+fallback. Server generation is checked around snapshot/metadata reads.
+
+Watcher reads have a 0.8-second socket deadline and a separate 1.2-second host
+batch budget, also constrained by the normal per-host deadline. A stalled,
+malformed, unsafe, disconnected, or unsupported watcher sets `state_error`
+with an existing error code and a content-free message. It never discards a
+successful inventory/preview or changes its primary `error`/exit status.
+Missing unconfigured companion sockets are normal standalone operation.
 
 ## Limits and failures
 

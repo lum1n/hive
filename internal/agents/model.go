@@ -101,17 +101,19 @@ type Membership struct {
 }
 
 type Agent struct {
-	ID         string       `json:"id"`
-	Host       string       `json:"host"`
-	Socket     string       `json:"socket"`
-	Generation string       `json:"generation"`
-	Pane       string       `json:"pane"`
-	Window     string       `json:"window"`
-	Session    string       `json:"session"`
-	Kind       string       `json:"kind"`
-	Path       string       `json:"path"`
-	State      string       `json:"state"`
-	Provenance string       `json:"provenance"`
+	ID         string   `json:"id"`
+	Host       string   `json:"host"`
+	Socket     string   `json:"socket"`
+	Generation string   `json:"generation"`
+	Pane       string   `json:"pane"`
+	Window     string   `json:"window"`
+	Session    string   `json:"session"`
+	Kind       string   `json:"kind"`
+	Path       string   `json:"path"`
+	State      string   `json:"state"`
+	Provenance string   `json:"provenance"`
+	StateError *Failure `json:"state_error,omitempty"`
+	pid        int
 	ObservedAt time.Time    `json:"observed_at"`
 	Members    []Membership `json:"memberships"`
 }
@@ -140,11 +142,15 @@ type ListResponse struct {
 }
 
 type Capture struct {
+	pid        int
+	window     string
+	kind       string
 	ID         string    `json:"id"`
 	Text       string    `json:"text,omitempty"`
 	Time       time.Time `json:"time"`
 	State      string    `json:"state"`
 	Provenance string    `json:"provenance"`
+	StateError *Failure  `json:"state_error,omitempty"`
 	Truncated  bool      `json:"truncated"`
 	Error      *Failure  `json:"error,omitempty"`
 }

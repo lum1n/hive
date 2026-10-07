@@ -85,7 +85,7 @@ connection.
 ## Agents
 
 `hive agents` opens an agent picker with the same appearance and fuzzy
-filtering as the session picker. Rows show the host/session, agent kind,
+filtering as the session picker. Rows show the host/session, agent kind/state,
 window/pane, and project path. Agents arrive as each host responds; an
 unavailable host does not delay other hosts or appear as a healthy empty list.
 
@@ -125,7 +125,9 @@ tmux server, it switches the initiating client instead of nesting tmux; use
 `--client` when multiple clients make the origin ambiguous.
 
 Remote hosts need only their existing SSH, tmux, and standard OS tools.
-Neither Hive nor Python needs to be installed remotely. Detection supports
+Neither Hive nor Python is required remotely for discovery, capture, or attach.
+The optional watcher bridge uses an existing remote `python3` when available.
+Detection supports
 interpreter wrappers and process descendants. An explicit pane override can
 mark a wrapper or exclude a pane:
 
@@ -134,8 +136,30 @@ tmux set-option -p -t %12 @agent-overview-kind copilot
 tmux set-option -p -t %13 @agent-overview-kind off
 ```
 
-Agent listing is metadata-only and initially reports `unknown`. Captures
-provide conservative heuristic states, not authoritative agent-watcher state.
+Agent listing is metadata-only. When an existing same-user agent-watcher socket
+is available, listing and capture can use its states (`provenance: "shared"`).
+Hive checks tmux-agent-state's `@agent_watcher_socket`, or the server's default
+`<tmux socket>.agent-watcher.sock` companion. It never installs, launches,
+reconfigures, or stops a watcher. Without a watcher, listing reports `unknown`
+and captures retain conservative text-based states. No missing optional runtime
+or failed watcher prevents ordinary discovery/capture/attachment.
+
+The bridge deliberately uses only active, single-pane windows with a matching
+agent kind and process identity. Split windows, unbound records, conflicting
+linked memberships, and unmatched labels fall back rather than attributing
+somebody else's state. Snapshot reads are bounded to 0.8 seconds per socket and
+1.2 seconds per host batch, within the existing per-host operation deadline.
+Optional lookup errors appear separately as `state_error`; successful previews
+remain successful.
+
+Disable watcher integration globally in `hive.toml`, before any `[[hosts]]`:
+
+```toml
+agent_watcher = "off" # auto (default) or off
+```
+
+Or use `hive agents --no-watcher --json` and
+`hive agents capture --no-watcher --id '<reference>' --json`.
 These commands do not use the picker cache or write previews to disk.
 `capabilities` does not read configuration or contact hosts. Other commands
 contact only configured hosts; `--host` narrows listing.

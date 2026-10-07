@@ -117,11 +117,14 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 	var host, initiatingClient *string
 	var ids references
 	lines := 200
+	noWatcher := false
 	switch command {
 	case "list":
+		flags.BoolVar(&noWatcher, "no-watcher", false, "disable optional agent-watcher state lookups")
 		host = flags.String("host", "", "only this configured host")
 		initiatingClient = flags.String("client", "", "initiating local tmux client for interactive attachment")
 	case "capture":
+		flags.BoolVar(&noWatcher, "no-watcher", false, "disable optional agent-watcher state lookups")
 		flags.Var(&ids, "id", "agent reference; repeat for a batch")
 		flags.IntVar(&lines, "lines", 200, "maximum captured rows")
 	case "attach":
@@ -158,14 +161,15 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 	}
 	if command == "capabilities" {
 		return json.NewEncoder(stdout).Encode(struct {
-			Version    int      `json:"version"`
-			Commands   []string `json:"commands"`
-			Kinds      []string `json:"kinds"`
-			MaxTargets int      `json:"max_targets"`
-			MaxLines   int      `json:"max_lines"`
-			MaxBytes   int      `json:"max_bytes"`
+			Version      int      `json:"version"`
+			Commands     []string `json:"commands"`
+			Kinds        []string `json:"kinds"`
+			MaxTargets   int      `json:"max_targets"`
+			MaxLines     int      `json:"max_lines"`
+			MaxBytes     int      `json:"max_bytes"`
+			StateSources []string `json:"state_sources"`
 		}{agents.Version, []string{"list", "capture", "attach"}, agents.Kinds,
-			agents.MaxTargets, agents.MaxLines, agents.MaxBytes})
+			agents.MaxTargets, agents.MaxLines, agents.MaxBytes, []string{"heuristic", "shared"}})
 	}
 	if command == "capture" && (len(ids) == 0 || lines < 1 || lines > agents.MaxLines) {
 		return fmt.Errorf("capture needs --id and 1-%d lines", agents.MaxLines)
@@ -178,6 +182,9 @@ func Run(ctx context.Context, args []string, configPath string, stdout, stderr i
 	cfg, err := config.Load(*path)
 	if err != nil {
 		return fmt.Errorf("cannot load Hive configuration; check the path and TOML settings")
+	}
+	if noWatcher {
+		cfg.AgentWatcher = "off"
 	}
 	if command == "attach" && (!term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd()))) {
 		return fmt.Errorf("agent attach needs a terminal")

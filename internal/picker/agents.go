@@ -329,7 +329,10 @@ func renderAgentRow(row agentRow, selected bool, width int) string {
 			left += row.agent.Session
 			detail = row.agent.Window + " "
 		}
-		detail = agentText(row.agent.Kind) + "  " + detail + agentText(row.agent.Pane) + "  " + agentText(row.agent.Path)
+		detail = agentText(row.agent.Kind) + "  " + agentText(row.agent.State) + "  " + detail + agentText(row.agent.Pane) + "  " + agentText(row.agent.Path)
+		if row.agent.StateError != nil {
+			detail += "  watcher unavailable"
+		}
 	}
 	leftWidth := min(28, max(8, width/3))
 	left = lipgloss.NewStyle().Width(leftWidth).Render(ansi.Truncate(left, leftWidth, "…"))

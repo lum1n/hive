@@ -150,7 +150,7 @@ func TestNativeServerCollisionAndRestart(t *testing.T) {
 func TestNativeProbeSyntax(t *testing.T) {
 	host := config.Host{ID: "local", Local: true, Socket: "/fixture with spaces.sock"}
 	ref := testReference(host.ID, host.Socket)
-	for index, script := range []string{inventoryScript(host), captureScript(host, []Reference{ref}, 200), targetScript(host, ref)} {
+	for index, script := range []string{inventoryScript(host), captureScript(host, []Reference{ref}, 200), targetScript(host, ref), watcherBatchScript(host, []Reference{ref})} {
 		if out, err := exec.Command("sh", "-n", "-c", script).CombinedOutput(); err != nil {
 			t.Fatalf("invalid POSIX probe syntax (%d): %s", index, out)
 		}
@@ -184,8 +184,14 @@ func TestNativeMultipleServersOnOneHost(t *testing.T) {
 	}
 	calls = 0
 	response, err := client.Capture(context.Background(), []string{a.ID, b.ID}, 200)
-	if err != nil || calls != 1 || response.Captures[0].Error != nil || response.Captures[1].Error != nil {
+	if err != nil || calls != 2 || response.Captures[0].Error != nil || response.Captures[1].Error != nil {
 		t.Fatal("same-host cross-server captures were not batched")
+	}
+	client.Config.AgentWatcher = "off"
+	calls = 0
+	response, err = client.Capture(context.Background(), []string{a.ID, b.ID}, 200)
+	if err != nil || calls != 1 || response.Captures[0].Error != nil || response.Captures[1].Error != nil {
+		t.Fatal("standalone captures did not remain one batch per host")
 	}
 }
 

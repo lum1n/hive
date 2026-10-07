@@ -23,10 +23,25 @@ func TestCapabilitiesWithoutConfigOrTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 	var result struct {
-		Version int `json:"version"`
+		Version      int      `json:"version"`
+		StateSources []string `json:"state_sources"`
 	}
-	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.Version != 1 || diagnostics.Len() != 0 {
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil || result.Version != 1 || diagnostics.Len() != 0 ||
+		len(result.StateSources) != 2 || result.StateSources[1] != "shared" {
 		t.Fatal("capabilities are not clean versioned JSON")
+	}
+}
+
+func TestWatcherOptOutHelpWithoutConfig(t *testing.T) {
+	for _, command := range []string{"list", "capture"} {
+		var out, diagnostics bytes.Buffer
+		if err := Run(context.Background(), []string{command, "--no-watcher", "--help"},
+			"/missing-fixture.toml", &out, &diagnostics); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(diagnostics.String(), "no-watcher") || out.Len() != 0 {
+			t.Fatal("watcher opt-out missing from network-free help")
+		}
 	}
 }
 

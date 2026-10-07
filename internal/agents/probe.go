@@ -201,7 +201,7 @@ _truncated=0
 [ "${#_text}" -le %d ] || _truncated=1
 printf 'C\t%d\t%%s\t%%s\t%%s\t%%s\t' "$_truncated" "$_pid" "$_kind" "$_command"
 printf %%s "$_text" | head -c %d | hive_b64
-printf '\n'
+printf '\t%%s\n' "$_window"
 ) || printf 'F\t%d\t%%s\n' "$?"
 `, MaxBytes, index, MaxBytes, index))
 	}

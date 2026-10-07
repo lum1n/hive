@@ -14,6 +14,7 @@ import (
 const DefaultPrefix = "ctrl-space"
 
 type Config struct {
+	AgentWatcher   string `toml:"agent_watcher"`
 	Prefix         string `toml:"prefix"`
 	ControlPersist int    `toml:"control_persist"`
 	Hosts          []Host `toml:"hosts"`
@@ -79,6 +80,12 @@ func Load(path string) (Config, error) {
 }
 
 func (c *Config) normalize() error {
+	if c.AgentWatcher == "" {
+		c.AgentWatcher = "auto"
+	}
+	if c.AgentWatcher != "auto" && c.AgentWatcher != "off" {
+		return fmt.Errorf("agent_watcher must be auto or off")
+	}
 	if strings.TrimSpace(c.Prefix) == "" {
 		c.Prefix = DefaultPrefix
 	}
@@ -135,6 +142,8 @@ const Example = `# Hive workspace hosts. Opt-in only.
 # The machine you sit on: local = true. Do not SSH to yourself.
 
 prefix = "ctrl-space"
+# Optional watcher states: auto (default), or off.
+# agent_watcher = "off"
 
 [[hosts]]
 id = "local"

@@ -24,12 +24,15 @@ type Client struct {
 	Timeout time.Duration
 }
 
-func (c Client) run(ctx context.Context, host config.Host, script string) execx.Result {
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = 12 * time.Second
+func (c Client) operationTimeout() time.Duration {
+	if c.Timeout > 0 {
+		return c.Timeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	return 12 * time.Second
+}
+
+func (c Client) run(ctx context.Context, host config.Host, script string) execx.Result {
+	ctx, cancel := context.WithTimeout(ctx, c.operationTimeout())
 	defer cancel()
 	if !host.Local && (strings.HasPrefix(host.Destination(), "-") || strings.ContainsAny(host.Destination(), "\x00\r\n")) {
 		return execx.Result{Err: errors.New("invalid configured SSH destination")}
@@ -109,6 +112,8 @@ func (c Client) List(ctx context.Context, hostID string) (ListResponse, error) {
 				response.Hosts[index] = hostResult(host, commandFailure(execx.Result{Err: ctx.Err()}))
 				return
 			}
+			ctx, cancel := context.WithTimeout(ctx, c.operationTimeout())
+			defer cancel()
 			result := c.run(ctx, host, inventoryScript(host))
 			if result.Err != nil {
 				response.Hosts[index] = hostResult(host, commandFailure(result))
@@ -121,6 +126,24 @@ func (c Client) List(ctx context.Context, hostID string) (ListResponse, error) {
 			}
 			response.Hosts[index] = hostResult(host, nil)
 			response.Hosts[index].Servers = servers
+			var refs []Reference
+			for _, server := range servers {
+				if len(server.Agents) > 0 {
+					ref, _ := ParseReference(server.Agents[0].ID)
+					refs = append(refs, ref)
+				}
+			}
+			watchers := c.watchers(ctx, host, refs)
+			for i := range servers {
+				watcher := watchers[servers[i].Socket]
+				for j := range servers[i].Agents {
+					agent := &servers[i].Agents[j]
+					agent.StateError = watcher.failure()
+					if state, ok := watcher.state(agent.Pane, agent.Window, agent.pid, agent.Kind); ok {
+						agent.State, agent.Provenance = state, "shared"
+					}
+				}
+			}
 			for _, server := range servers {
 				if server.Error != nil {
 					response.Hosts[index].Status = "degraded"
@@ -395,7 +418,7 @@ func parseInventory(raw []byte, host string, now time.Time) ([]Server, error) {
 				server.Agents = append(server.Agents, Agent{ID: ref.ID(), Host: host, Socket: server.Socket,
 					Generation: server.Generation, Pane: fields[1], Window: fields[2], Session: fields[3],
 					Kind: kind, Path: display(directory), State: "unknown", Provenance: "unavailable",
-					ObservedAt: now, Members: []Membership{membership}})
+					ObservedAt: now, Members: []Membership{membership}, pid: pid})
 			}
 		default:
 			return nil, fmt.Errorf("unknown discovery record")
@@ -462,6 +485,8 @@ func (c Client) Capture(ctx context.Context, ids []string, lines int) (CaptureRe
 				}
 				return
 			}
+			ctx, cancel := context.WithTimeout(ctx, c.operationTimeout())
+			defer cancel()
 			result := c.run(ctx, g.host, captureScript(g.host, g.refs, lines))
 			var captures []Capture
 			var fail *Failure
@@ -472,6 +497,26 @@ func (c Client) Capture(ctx context.Context, ids []string, lines int) (CaptureRe
 				captures, err = parseCaptures(result.Stdout, g.refs)
 				if err != nil {
 					fail = failure("protocol", "invalid capture response")
+				}
+			}
+			if fail == nil {
+				var refs []Reference
+				for i, capture := range captures {
+					if capture.Error == nil {
+						refs = append(refs, g.refs[i])
+					}
+				}
+				watchers := c.watchers(ctx, g.host, refs)
+				for i := range captures {
+					capture := &captures[i]
+					if capture.Error != nil {
+						continue
+					}
+					watcher := watchers[g.refs[i].Socket]
+					capture.StateError = watcher.failure()
+					if state, ok := watcher.state(g.refs[i].Pane, capture.window, capture.pid, capture.kind); ok && capture.window != "" {
+						capture.State, capture.Provenance = state, "shared"
+					}
 				}
 			}
 			for i, index := range g.indices {
@@ -531,8 +576,15 @@ func parseCaptures(raw []byte, refs []Reference) ([]Capture, error) {
 				capture.Error = failure("unavailable", "pane capture failed")
 			}
 		} else {
-			if len(fields) != 7 || (fields[2] != "0" && fields[2] != "1") {
+			if (len(fields) != 7 && len(fields) != 8) || (fields[2] != "0" && fields[2] != "1") {
 				return nil, fmt.Errorf("invalid capture fields")
+			}
+			window := ""
+			if len(fields) == 8 {
+				window = fields[7]
+				if !windowID.MatchString(window) {
+					return nil, fmt.Errorf("invalid capture window")
+				}
 			}
 			pid, err := strconv.Atoi(fields[3])
 			override, overrideErr := decoded(fields[4], 16384)
@@ -560,6 +612,7 @@ func parseCaptures(raw []byte, refs []Reference) ([]Capture, error) {
 					capture.Truncated = true
 				}
 				capture.State, capture.Provenance = Classify(capture.Text), "heuristic"
+				capture.pid, capture.window, capture.kind = pid, window, kind
 			}
 		}
 		captures[index] = capture
@@ -581,7 +634,9 @@ func (c Client) Resolve(ctx context.Context, id string) (config.Host, Reference,
 	if !ok {
 		return config.Host{}, Reference{}, fmt.Errorf("agent host is not configured")
 	}
-	listing, err := c.List(ctx, host.ID)
+	resolver := c
+	resolver.Config.AgentWatcher = "off"
+	listing, err := resolver.List(ctx, host.ID)
 	if err != nil {
 		return config.Host{}, Reference{}, err
 	}

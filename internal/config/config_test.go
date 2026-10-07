@@ -69,7 +69,22 @@ local = true
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected prefix error")
+	}
+}
+
+func TestOptionalAgentWatcher(t *testing.T) {
+	for _, mode := range []string{"", "auto", "off", "invalid"} {
+		cfg := Config{AgentWatcher: mode, Hosts: []Host{{ID: "local", Local: true}}}
+		err := cfg.normalize()
+		if mode == "invalid" {
+			if err == nil {
+				t.Fatal("invalid watcher mode accepted")
+			}
+		} else if err != nil || cfg.AgentWatcher == "" {
+			t.Fatal("optional watcher defaults invalid")
+		}
 	}
 }
