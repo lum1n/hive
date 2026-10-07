@@ -9,14 +9,13 @@ import (
 )
 
 var (
-	titleStyle    = lipgloss.NewStyle().Bold(true)
-	selectedStyle = lipgloss.NewStyle().Reverse(true)
-	plainStyle    = lipgloss.NewStyle()
-	mutedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	onlineStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	offlineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	authStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	busyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	titleStyle   = lipgloss.NewStyle().Bold(true)
+	plainStyle   = lipgloss.NewStyle()
+	mutedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	onlineStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	offlineStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
+	authStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
+	busyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
 )
 
 // hostPalette skips red and green so host names never read as a status badge.
@@ -48,26 +47,19 @@ func leftWidth(width int) int {
 	return min(28, max(8, width/3))
 }
 
-// renderRow lays out columns with the shared marker and gaps. Selection
-// reverses every segment instead of wrapping the line, so inner colors don't
-// reset the highlight halfway through.
+// renderRow lays out columns with the shared marker and gaps. The marker is
+// the only selection cue; the row itself keeps its normal colors.
 func renderRow(selected bool, width int, cols ...col) string {
-	style := func(s lipgloss.Style) lipgloss.Style {
-		if selected {
-			return s.Reverse(true)
-		}
-		return s
-	}
 	marker := "  "
 	if selected {
-		marker = "▸ "
+		marker = titleStyle.Render("▸") + " "
 	}
 	var b strings.Builder
-	b.WriteString(style(plainStyle).Render(marker))
+	b.WriteString(marker)
 	used := 2
 	for i, c := range cols {
 		if i > 0 {
-			b.WriteString(style(plainStyle).Render("  "))
+			b.WriteString("  ")
 			used += 2
 		}
 		w := c.width
@@ -84,10 +76,10 @@ func renderRow(selected bool, width int, cols ...col) string {
 			}
 			text := ansi.Truncate(s.text, left, "…")
 			left -= ansi.StringWidth(text)
-			b.WriteString(style(s.style).Render(text))
+			b.WriteString(s.style.Render(text))
 		}
 		if c.width > 0 && left > 0 {
-			b.WriteString(style(plainStyle).Render(strings.Repeat(" ", left)))
+			b.WriteString(strings.Repeat(" ", left))
 		}
 		used += w
 	}
