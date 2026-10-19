@@ -129,7 +129,7 @@ HIVE_TMUX_SOCKS=""
 hive_add_sock() {
 _sock=$1
 if ! [ -S "$_sock" ]; then
-_sock=$(printf '%s\n' "$_sock" | sed 's/ (type=[^)]*)$//')
+_sock=$(printf '%s\n' "$_sock" | sed -e 's/ (type=[^)]*)$//' -e 's/ type=[A-Z]*\( ([A-Z]*)\)\{0,1\}$//')
 fi
 [ -n "$_sock" ] && [ -S "$_sock" ] || return 0
 case "$_sock" in *.agent-watcher.sock) return 0 ;; esac

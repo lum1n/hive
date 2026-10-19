@@ -238,3 +238,32 @@ func TestSocketDiscoverySkipsWatcherAndUnnecessarySweep(t *testing.T) {
 		t.Fatal("discovery swept companion sockets despite finding live sockets")
 	}
 }
+
+func TestSocketDiscoveryParsesLinuxLsofNames(t *testing.T) {
+	dir, err := os.MkdirTemp("", "hl-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Remove(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	current, other := filepath.Join(dir, "current"), filepath.Join(dir, "other")
+	for _, path := range []string{current, other} {
+		listener, err := net.Listen("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { listener.Close() })
+	}
+	// lsof 4.9x on Linux appends " type=STREAM", optionally with a state.
+	t.Setenv("TMUX", current+",1,0")
+	script := "_saved_tmux=$TMUX\nlsof() { printf '%s\\n' " + sshx.SingleQuote("n"+current+" type=STREAM (LISTEN)") +
+		" " + sshx.SingleQuote("n"+other+" type=STREAM") + "; }\n" + socketPrelude +
+		"printf %s \"$HIVE_TMUX_SOCKS\"\n"
+	raw, err := exec.Command("sh", "-c", script).Output()
+	if err != nil || string(raw) != current+"\n"+other {
+		t.Fatalf("live tmux servers missed in Linux lsof output: %q", raw)
+	}
+}
