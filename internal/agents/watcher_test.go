@@ -336,3 +336,42 @@ func TestNativeConflictingLinkedWatcherStates(t *testing.T) {
 		t.Fatal("conflicting linked watcher states attributed to capture")
 	}
 }
+
+func TestUsableQuotaDropsMalformedReadings(t *testing.T) {
+	window := QuotaWindow{Label: "5h", UsedPercent: 50}
+	got := usableQuota([]Quota{
+		{Kind: "unknown", Windows: []QuotaWindow{window}},
+		{Kind: "claude", Plan: " Max \x1b[31m5x\n", Windows: []QuotaWindow{{Label: " 5h\t", UsedPercent: 100, ResetsAt: "2026-10-07T12:00:00Z"}}},
+		{Kind: "claude", Plan: "duplicate", Windows: []QuotaWindow{window}},
+		{Kind: "codex"},
+		{Kind: "codex", Windows: make([]QuotaWindow, 9)},
+		{Kind: "codex", Plan: strings.Repeat("p", 65), Windows: []QuotaWindow{window}},
+		{Kind: "codex", Windows: []QuotaWindow{window, {Label: "7d", UsedPercent: 100.5}}},
+		{Kind: "codex", Windows: []QuotaWindow{{Label: "5h", UsedPercent: -1}}},
+		{Kind: "codex", Windows: []QuotaWindow{{Label: "\x1b", UsedPercent: 1}}},
+		{Kind: "codex", Windows: []QuotaWindow{{Label: strings.Repeat("l", 33), UsedPercent: 1}}},
+		{Kind: "codex", Windows: []QuotaWindow{{Label: "5h", UsedPercent: 1, ResetsAt: "tomorrow"}}},
+		{Kind: "pi", Stale: true, Windows: []QuotaWindow{{Label: "7d", UsedPercent: 0}}},
+	})
+	if len(got) != 2 || got[0].Kind != "claude" || got[1].Kind != "pi" || !got[1].Stale {
+		t.Fatalf("usableQuota kept %+v", got)
+	}
+	if got[0].Plan != "Max 5x" || got[0].Windows[0].Label != "5h" || got[0].Windows[0].ResetsAt != "2026-10-07T12:00:00Z" {
+		t.Fatalf("usableQuota did not sanitize text: %+v", got[0])
+	}
+}
+
+func TestUsableQuotaBoundedByKinds(t *testing.T) {
+	var quota []Quota
+	for range 3 {
+		for _, kind := range Kinds {
+			quota = append(quota, Quota{Kind: kind, Windows: []QuotaWindow{{Label: "5h", UsedPercent: 1}}})
+		}
+	}
+	if got := usableQuota(quota); len(got) != len(Kinds) {
+		t.Fatalf("usableQuota kept %d readings, want %d", len(got), len(Kinds))
+	}
+	if got := usableQuota(nil); got != nil {
+		t.Fatalf("usableQuota(nil) = %+v", got)
+	}
+}

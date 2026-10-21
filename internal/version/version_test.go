@@ -61,3 +61,53 @@ func TestApplyBuildInfoDevelKeepsDefault(t *testing.T) {
 		t.Fatalf("Version=%q", Version)
 	}
 }
+
+func TestApplyBuildInfoDirtyAndDateFormats(t *testing.T) {
+	origV, origC, origD := Version, Commit, Date
+	t.Cleanup(func() {
+		Version, Commit, Date = origV, origC, origD
+	})
+
+	Version, Commit, Date = "0.3.1", "none", "unknown"
+	applyBuildInfo(&debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "aabbccddeeff"},
+		{Key: "vcs.modified", Value: "true"},
+		{Key: "vcs.time", Value: "2026-08-29T14:00:00+02:00"},
+	}}, true)
+	if Commit != "aabbccddeeff-dirty" || Date != "2026-08-29T12:00:00Z" {
+		t.Fatalf("Commit=%q Date=%q", Commit, Date)
+	}
+
+	Commit, Date = "none", "unknown"
+	applyBuildInfo(&debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.time", Value: "yesterday"},
+	}}, true)
+	if Commit != "none" || Date != "yesterday" || String() != "0.3.1" {
+		t.Fatalf("Commit=%q Date=%q String=%q", Commit, Date, String())
+	}
+}
+
+func TestApplyBuildInfoKeepsLdflags(t *testing.T) {
+	origV, origC, origD := Version, Commit, Date
+	t.Cleanup(func() {
+		Version, Commit, Date = origV, origC, origD
+	})
+	Version, Commit, Date = "1.2.0", "1234567890", "2026-10-01T00:00:00Z"
+
+	info := &debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "aabbccddeeff"},
+		{Key: "vcs.time", Value: "2026-08-29T12:00:00Z"},
+	}}
+	applyBuildInfo(info, true)
+	applyBuildInfo(nil, true)
+	applyBuildInfo(&debug.BuildInfo{Main: debug.Module{Version: "v9.9.9"}}, false)
+	if Version != "1.2.0" || Commit != "1234567890" || Date != "2026-10-01T00:00:00Z" {
+		t.Fatalf("ldflags overwritten: %q %q %q", Version, Commit, Date)
+	}
+	if String() != "1.2.0 (1234567)" {
+		t.Fatalf("String=%q", String())
+	}
+	if want := "hive 1.2.0\ncommit: 1234567890\nbuilt:  2026-10-01T00:00:00Z"; Full() != want {
+		t.Fatalf("Full=%q", Full())
+	}
+}
