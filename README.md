@@ -158,9 +158,10 @@ Schemas, limits, exit codes, and the optional watcher bridge are in
 
 ## How it stays fast
 
-The picker paints the last snapshot from `~/.local/state/hive/` immediately,
-then refreshes every host in parallel over a shared SSH ControlMaster. Attach
-opens its own SSH TTY.
+The picker paints the last snapshot from `~/.local/state/hive/` (or
+`$XDG_STATE_HOME/hive`, or `HIVE_STATE_DIR`) immediately, then refreshes
+every host in parallel over a shared SSH ControlMaster. Attach opens its own
+SSH TTY.
 
 Design notes: [docs/architecture.md](docs/architecture.md).
 
